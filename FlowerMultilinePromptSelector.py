@@ -13,6 +13,7 @@ class FlowerMultilinePromptSelector:
                 "directory": ("STRING", {"default": ""}),
                 # Index 1 & 2: seed & seed_control
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "continuous_processing": ("INT", {"default": 1, "min": 1, "max": 9999999}),
                 # Index 3: file_configs
                 "file_configs": ("STRING", {"default": "{}", "multiline": True}),
             },
@@ -24,7 +25,7 @@ class FlowerMultilinePromptSelector:
     CATEGORY = "flower-tools"
     OUTPUT_NODE = True 
 
-    def select_multiline_prompt(self, directory, seed, file_configs="{}"):
+    def select_multiline_prompt(self, directory, seed, continuous_processing, file_configs="{}"):
         base_dir = directory.strip()
         if not base_dir:
             base_dir = os.path.join(os.path.dirname(__file__), "wildcards")
@@ -41,6 +42,9 @@ class FlowerMultilinePromptSelector:
             files.sort() # Python 預設對 string list 做 ASCII 排序
         except Exception as e:
             return {"ui": {"text": [str(e)]}, "result": ("Error",)}
+
+        # 🌸 核心運算邏輯: seed 除以 continuous_processing 🌸
+        process_idx = seed // max(1, continuous_processing)
 
         global_pool = []
         for filename in files:
@@ -60,12 +64,14 @@ class FlowerMultilinePromptSelector:
                     global_pool.extend(lines)
                 elif status == "random":
                     temp_lines = lines.copy()
-                    random.Random(seed).shuffle(temp_lines)
+                    # 🌸 隨機也使用計算後的 process_idx 以保持連續處理時內容一致 🌸
+                    random.Random(process_idx).shuffle(temp_lines)
                     global_pool.extend(temp_lines)
             except: continue
 
         if not global_pool: result = ""
-        else: result = global_pool[seed % len(global_pool)]
+        else:
+            result = global_pool[process_idx % len(global_pool)]
 
         return {"ui": {"text": [result]}, "result": (result,)}
 
@@ -74,6 +80,10 @@ class FlowerMultilinePromptSelector:
 async def list_files(request):
     directory = request.query.get("directory", "").strip()
     if not directory: directory = os.path.join(os.path.dirname(__file__), "wildcards")
+    
+    if not os.path.isdir(directory):
+        return web.json_response({"error": "Directory not found", "path": directory}, status=404)
+
     files = []
     try:
         f_list = sorted([f for f in os.listdir(directory) if f.endswith(".txt")])
@@ -84,7 +94,9 @@ async def list_files(request):
                     count = sum(1 for line in file if line.strip())
                 files.append({"name": f, "count": count})
             except: pass
-    except: pass
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+    
     return web.json_response({"files": files})
 
 @PromptServer.instance.routes.get("/flower-tools/get-file-content")
@@ -92,11 +104,18 @@ async def get_file_content(request):
     directory = request.query.get("directory", "").strip()
     filename = request.query.get("filename", "")
     if not directory: directory = os.path.join(os.path.dirname(__file__), "wildcards")
+    
+    path = os.path.join(directory, filename)
+    if not os.path.isfile(path):
+        return web.json_response({"error": "File not found", "path": path}, status=404)
+
     lines = []
     try:
-        with open(os.path.join(directory, filename), "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             lines = [line.strip() for line in f.readlines() if line.strip()]
-    except: pass
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+    
     return web.json_response({"lines": lines})
 
 NODE_CLASS_MAPPINGS = { "FlowerMultilinePromptSelector": FlowerMultilinePromptSelector }

@@ -34,9 +34,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         const rebuildFileButtons = function (node, filesFromApi) {
             if (!node.widgets) return;
 
-            // 1. 固定鎖定前 6 個 (索引 0-5)。其餘全部移除
-            if (node.widgets.length > 6) {
-                for (let i = node.widgets.length - 1; i >= 6; i--) {
+            // 1. 固定鎖定前 7 個 (索引 0-6)。其餘全部移除
+            if (node.widgets.length > 7) {
+                for (let i = node.widgets.length - 1; i >= 7; i--) {
                     const w = node.widgets[i];
                     if (w.inputEl) w.inputEl.remove();
                     node.widgets.splice(i, 1);
@@ -54,7 +54,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 }));
             }
 
-            // 3. 從索引 6 開始新增按鈕，並加入間距
+            // 3. 從索引 7 開始新增按鈕，並加入間距
             for (const file of displayList) {
                 const widget = node.addWidget("button", file.name, null, () => {
                     node.showSelectionPopup(file.name);
@@ -115,7 +115,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
             // --- 🌸 建立核心地基 (索引順序守護) 🌸 ---
 
-            // 前面三個由 Python 給定: directory(0), seed(1), seed_control(2), file_configs(3)
+            // 前面四個由 Python 給定: directory(0), seed(1), seed_control(2), continuous_processing(3), file_configs(4)
 
             // 4. Result (result_dialog) - 改用 ComfyUI 標準元件寫法。
             if (!this.widgets.find(w => w.name === "result_dialog")) {
@@ -144,27 +144,47 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
                     try {
                         const response = await api.fetchApi(`/flower-tools/list-files?directory=${encodeURIComponent(dir)}`);
+                        if (!response.ok) {
+                            console.warn("Directory not found or API error, keeping current configs.");
+                            const errorMsg = `Directory [ ${dir} ] 並不存在，請檢查並重新輸入。`;
+                            console.warn(errorMsg);
+                            window.alert(errorMsg);
+                            return;
+                        }
                         const data = await response.json();
-                        if (data.files) {
+                        if (data && data.files && data.files.length > 0) {
+                            // 🌸 重新構建 fileConfigs，只保留當前目錄有的檔案，避免不同目錄檔案混雜 (Fix Task 1) 🌸
+                            const newConfigs = {};
                             data.files.forEach(f => {
-                                if (!this.fileConfigs[f.name]) {
-                                    this.fileConfigs[f.name] = { status: "disabled", count: f.count };
+                                if (this.fileConfigs[f.name]) {
+                                    newConfigs[f.name] = this.fileConfigs[f.name];
+                                    newConfigs[f.name].count = f.count;
                                 } else {
-                                    this.fileConfigs[f.name].count = f.count;
+                                    newConfigs[f.name] = { status: "disabled", count: f.count };
                                 }
                             });
-                            // 反饋回 JSON 框
-                            if (cfw) cfw.value = JSON.stringify(this.fileConfigs);
+                            this.fileConfigs = newConfigs;
+
+                            // 反饋回 JSON 框，使用多行格式 (Fix Task 2)
+                            if (cfw) cfw.value = JSON.stringify(this.fileConfigs, null, 2);
                             rebuildFileButtons(this, data.files);
+                        } else if (data && data.files && data.files.length === 0) {
+                            // 如果目錄存在但真的是空的，可以選擇清空或保持。這裡選擇清空，因為 API 成功回傳了空陣列。
+                            this.fileConfigs = {};
+                            if (cfw) cfw.value = "{}";
+                            rebuildFileButtons(this, []);
                         }
-                    } catch (e) { console.error(e); }
+                    } catch (e) {
+                        console.error("Refresh failed:", e);
+                        // 發生錯誤（如網路問題或 Python 端報錯）時，保持原樣不變
+                    }
                 });
                 btn.name = "refresh_btn";
                 btn.serialize = false;
             }
 
             // --- 強制地基排序 (防止索引偏移) ---
-            const baseOrder = ["directory", "seed", "seed_control", "file_configs", "result_dialog", "refresh_btn"];
+            const baseOrder = ["directory", "seed", "seed_control", "continuous_processing", "file_configs", "result_dialog", "refresh_btn"];
             const reorder = () => {
                 baseOrder.forEach((name, targetIdx) => {
                     const idx = this.widgets.findIndex(w => w.name === name);
@@ -214,7 +234,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             const overlay = document.createElement('div');
             Object.assign(overlay.style, { position: 'fixed', top: '0', left: '0', width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.85)', zIndex: '10000', display: 'flex', justifyContent: 'center', alignItems: 'center', backdropFilter: 'blur(6px)' });
             const dialog = document.createElement('div');
-            Object.assign(dialog.style, { width: '600px', height: '85%', backgroundColor: '#181818', color: '#eee', borderRadius: '20px', display: 'flex', flexDirection: 'column', boxShadow: '0 30px 60px rgba(0,0,0,0.8)', border: '2px solid #333', overflow: 'hidden' });
+            Object.assign(dialog.style, { width: '1200px', height: '85%', backgroundColor: '#181818', color: '#eee', borderRadius: '20px', display: 'flex', flexDirection: 'column', boxShadow: '0 30px 60px rgba(0,0,0,0.8)', border: '2px solid #333', overflow: 'hidden' });
 
             const header = document.createElement('div');
             header.innerHTML = `<div style="padding:25px; border-bottom:2px solid #333; background:#222; font-size:24px; font-weight:bold; color:#fff;">🌸 ${fileName}</div>`;
@@ -223,7 +243,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             const updateCfg = (cfg) => {
                 this.fileConfigs[fileName] = { ...this.fileConfigs[fileName], ...cfg };
                 const cfw = this.widgets.find(w => w.name === "file_configs");
-                if (cfw) { cfw.value = JSON.stringify(this.fileConfigs); this.triggerSlotElementChange?.(); }
+                if (cfw) { cfw.value = JSON.stringify(this.fileConfigs, null, 2); this.triggerSlotElementChange?.(); }
                 this.setDirtyCanvas(true);
             };
 
