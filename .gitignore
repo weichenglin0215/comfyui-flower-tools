@@ -1,6 +1,8 @@
 bin/
 obj/
 .vs/
+.git/
+.gitignore
 
 # Test files
 test_*.py

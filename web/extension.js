@@ -4,7 +4,7 @@ import { api } from "../../scripts/api.js";
 // 確保在腳本頂部能存取到 ComfyWidgets (通常在擴充功能的 beforeRegisterNodeDef 裡)
 import { ComfyWidgets } from "../../scripts/widgets.js";
 
-console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V30 🌸🌸🌸");
+console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V31 🌸🌸🌸");
 
 (function () {
     const TARGET_KEY = "FlowerMultilinePromptSelector";
@@ -306,20 +306,13 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
     };
 
     app.registerExtension({
-        name: "Flower.MultilinePromptSelector.V30",
-        init() {
-            const scan = () => {
-                const keys = Object.keys(LiteGraph.registered_node_types);
-                // 處理 Selector 節點
-                keys.filter(k => k.includes(TARGET_KEY)).forEach(name => {
-                    setupNode(LiteGraph.registered_node_types[name], name);
-                });
-                // 處理 Replacer 節點
-                keys.filter(k => k.includes("FlowerKeywordReplacer")).forEach(name => {
-                    setupKeywordReplacer(LiteGraph.registered_node_types[name], name);
-                });
-            };
-            [0, 500, 1000, 2000, 5000].forEach(ms => setTimeout(scan, ms));
+        name: "Flower.MultilinePromptSelector.V31",
+        async beforeRegisterNodeDef(nodeType, nodeData, app) {
+            if (nodeData.name === TARGET_KEY) {
+                setupNode(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerKeywordReplacer") {
+                setupKeywordReplacer(nodeType, nodeData.name);
+            }
         }
     });
 })();
