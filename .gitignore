@@ -1,0 +1,35 @@
+bin/
+obj/
+.vs/
+
+# Test files
+test_*.py
+*_test.py
+
+# Test markdown files (except README.md and Prompt folder)
+*.md
+!README.md
+!Prompt/*.md
+
+# Config files
+openaimodel.json
+nul
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude AI directory
+.claude/
+
+# Font files (may have licensing issues)
+fonts/
