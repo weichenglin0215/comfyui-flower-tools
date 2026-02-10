@@ -119,4 +119,4 @@ async def get_file_content(request):
     return web.json_response({"lines": lines})
 
 NODE_CLASS_MAPPINGS = { "FlowerMultilinePromptSelector": FlowerMultilinePromptSelector }
-NODE_DISPLAY_NAME_MAPPINGS = { "FlowerMultilinePromptSelector": "Flower Multiline Prompt Selector" }
+NODE_DISPLAY_NAME_MAPPINGS = { "FlowerMultilinePromptSelector": "🌸Flower Multiline Prompt Selector" }

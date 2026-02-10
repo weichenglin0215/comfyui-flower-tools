@@ -35,5 +35,5 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FlowerKeywordReplacer": "Flower Keyword Replacer"
+    "FlowerKeywordReplacer": "🌸Flower Keyword Replacer"
 }

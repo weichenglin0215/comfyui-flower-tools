@@ -312,6 +312,134 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupNode(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerKeywordReplacer") {
                 setupKeywordReplacer(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerFileNameCombination") {
+                // 修改原型以增加幫助按鈕與預設寬度
+                const onNodeCreated = nodeType.prototype.onNodeCreated;
+                nodeType.prototype.onNodeCreated = function () {
+                    const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+                    this.size[0] = 600;
+
+                    if (!this.widgets.find(w => w.name === "help_btn")) {
+                        const hb = this.addWidget("button", "Help / 使用說明 (?)", null, () => {
+                            window.alert(`🌸 [Flower FileNameCombination] 使用說明 🌸
+
+本節點用於組合複雜的存檔檔名，支援動態日期與路徑。
+
+1. 變數預覽：
+   可以使用以下標籤於 Format 欄位中：
+   - %MainFolderName : 第一欄輸入的主目錄
+   - %SubFolderName  : 第二欄輸入的次目錄
+   - %FileName       : 檔名 (如果勾選 same_as_subfolder 則等同於 SubFolderName)
+   - %Suffix         : 後綴字
+   - %DATE           : 格式化日期 (依 DATE format)
+   - %TIME           : 格式化時間 (依 TIME format)
+   - %DATETIME       : 格式化日期時間 (依 DATETIME format)
+
+2. 格式範例：
+   - FullNameOut: %MainFolderName/%DATE-%SubFolderName/%FileName-%Suffix
+   - 輸出的 / 會自動被轉換成作業系統對應的路徑分隔符。
+
+3. 自動同步：
+   - 勾選 "same_as_subfolder" 會自動聯動 SubFolderName 與 FileName，
+     簡化「目錄名即檔名」的常見需求。
+
+⚠️ 注意：系統會自動過濾非法字元 (* : ? " < > | 等)。`);
+                        });
+                        hb.name = "help_btn";
+                        hb.serialize = false;
+                    }
+                    return r;
+                };
+            }
+        },
+        nodeCreated(node, app) {
+            if (node.comfyClass === "FlowerFileNameCombination") {
+                const illegalCharsAll = /[\\/:*?"<>|]/g;
+                const illegalCharsPath = /[:*?"<>|]/g;
+
+                const setupWidget = (name, regex) => {
+                    const w = node.widgets.find(x => x.name === name);
+                    if (!w) return null;
+
+                    // 覆蓋 callback 進行過濾
+                    const oldCallback = w.callback;
+                    w.callback = function (v) {
+                        const cleaned = typeof v === "string" ? v.replace(regex, "") : v;
+                        if (v !== cleaned) {
+                            w.value = cleaned;
+                            if (w.inputEl) w.inputEl.value = cleaned;
+                        }
+                        return oldCallback ? oldCallback.apply(this, [w.value]) : undefined;
+                    };
+                    return w;
+                };
+
+                const mainFolderName = setupWidget("MainFolderName", illegalCharsPath);
+                const subFolderName = setupWidget("SubFolderName", illegalCharsAll);
+                const fileName = setupWidget("FileName", illegalCharsAll);
+                const suffix = setupWidget("Suffix", illegalCharsAll);
+                const sameAsSub = node.widgets.find(w => w.name === "same_as_subfolder");
+                const noteWidget = node.widgets.find(w => w.name === "note");
+
+                // 強制執行邏輯
+                node.onDrawBackground = function () {
+                    if (this.size[0] < 400) this.size[0] = 400;
+
+                    // 動態調整 Note 高度 (讓它填滿底部空間)
+                    if (noteWidget) {
+                        // 計算除了 Note 以外所有 Widget 的預計高度加總 (大約值)
+                        // 通常一個標準 Widget 高度約為 30-40，如果是按鈕或 Label 也差不多
+                        // 我們可以根據當前 node.size[1] 減去固定偏移來計算
+                        // 或者動態計算除了最後一個 widget 以外的所有高度
+                        let otherWidgetsHeight = 0;
+                        for (const w of this.widgets) {
+                            if (w === noteWidget) continue;
+                            if (w.last_y !== undefined) {
+                                // 使用 last_y 可能是個好方法，但 ComfyUI 不一定更新它
+                            }
+                            // 預設給每個 Widget 35px 高度 (ComfyUI 標準)
+                            otherWidgetsHeight += 38;
+                        }
+
+                        // 額外加上標題列跟邊距高度
+                        const baseHeight = otherWidgetsHeight + 60;
+                        const remainingHeight = Math.max(60, this.size[1] - baseHeight);
+
+                        // 設置 Note widget 的高度
+                        noteWidget.computeSize = (w) => [w, remainingHeight];
+                    }
+
+                    if (sameAsSub && subFolderName && fileName) {
+                        const isSame = !!sameAsSub.value;
+                        if (isSame) {
+                            if (fileName.value !== subFolderName.value) {
+                                fileName.value = subFolderName.value;
+                            }
+                        }
+
+                        // 處理 UI 狀態
+                        if (fileName.inputEl) {
+                            fileName.inputEl.readOnly = isSame;
+                            fileName.inputEl.style.opacity = isSame ? "0.4" : "1.0";
+                            fileName.inputEl.style.pointerEvents = isSame ? "none" : "auto";
+                        }
+                    }
+
+                    // 執行即時過濾 (針對正在輸入的狀況)
+                    [{ w: mainFolderName, r: illegalCharsPath },
+                    { w: subFolderName, r: illegalCharsAll },
+                    { w: fileName, r: illegalCharsAll },
+                    { w: suffix, r: illegalCharsAll }].forEach(item => {
+                        if (item.w && item.w.inputEl) {
+                            const v = item.w.inputEl.value;
+                            const c = v.replace(item.r, "");
+                            if (v !== c) {
+                                item.w.inputEl.value = c;
+                                item.w.value = c;
+                            }
+                        }
+                    });
+                };
             }
         }
     });
