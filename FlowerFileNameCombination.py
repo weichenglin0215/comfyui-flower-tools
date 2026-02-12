@@ -16,9 +16,14 @@ class FlowerFileNameCombination:
                 "FullNameFormat": ("STRING", {"default": "%MainFolderName/%DATE-%SubFolderName/%FileName-%DATETIME-%Suffix"}),
                 "PathNameFormat": ("STRING", {"default": "%MainFolderName/%DATE-%SubFolderName/"}),
                 "FileNameFormat": ("STRING", {"default": "%FileName-%DATETIME-%Suffix"}),
-                "note": ("STRING", {"multiline": True, "default": "🌸 使用變數標籤：\n%MainFolderName, %SubFolderName, %FileName, %Suffix, %DATE, %TIME, %DATETIME"}),
             }
         }
+
+    @classmethod
+    def IS_CHANGED(s, **kwargs):
+        # 回傳當前時間戳，強制 ComfyUI 認為節點已改變，從而重新執行並更新時間
+        import time
+        return time.time()
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("FullNameOut", "PathNameOut", "FileNameOut")
@@ -46,9 +51,9 @@ class FlowerFileNameCombination:
             "%SubFolderName": SubFolderName,
             "%FileName": actual_file_name,
             "%Suffix": Suffix,
+            "%DATETIME": datetime_str,
             "%DATE": date_str,
             "%TIME": time_str,
-            "%DATETIME": datetime_str,
         }
         
         def apply_format(fmt):

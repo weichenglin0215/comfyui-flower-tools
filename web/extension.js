@@ -494,33 +494,56 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 const sameAsSub = node.widgets.find(w => w.name === "same_as_subfolder");
                 const noteWidget = node.widgets.find(w => w.name === "note");
 
+                // 1. 定義節點整體的「最小尺寸限制」
+                // 這是解決「縮小時反應遲鈍/黏住」的關鍵：告訴引擎這節點最少可以縮到多小
+                node.computeSize = function () {
+                    let minH = 35; // 標題列高度
+                    for (const w of this.widgets) {
+                        if (w === noteWidget) {
+                            minH += 60; // Note 最小只佔 60
+                        } else {
+                            // 其他元件按標準或自訂高度計算
+                            const wh = w.computeSize ? w.computeSize(this.size[0])[1] : 24;
+                            minH += wh + 4;
+                        }
+                    }
+                    return [400, minH];
+                };
+
+                // 2. 填充邏輯：將 Note 擴展到當前節點所剩的所有空間
+                const adjustNoteWidgetHeight = () => {
+                    if (!noteWidget) return;
+                    let consumedHeight = 30; // 初始偏移
+                    for (const w of node.widgets) {
+                        if (w === noteWidget) continue;
+                        const h = w.computeSize ? w.computeSize(node.size[0])[1] : 24;
+                        consumedHeight += h + 4;
+                    }
+
+                    // 填滿剩餘高度
+                    const footerMargin = 10;
+                    const newHeight = Math.max(60, node.size[1] - consumedHeight - footerMargin);
+
+                    if (noteWidget._last_computed_height !== newHeight) {
+                        // 更新 computeSize 讓 Note 的 DOM 元素 (textarea) 實際變長
+                        noteWidget.computeSize = (w) => [w, newHeight];
+                        noteWidget._last_computed_height = newHeight;
+                    }
+                };
+
+                // 攔截縮放事件
+                const oldOnResize = node.onResize;
+                node.onResize = function (size) {
+                    adjustNoteWidgetHeight();
+                    return oldOnResize ? oldOnResize.apply(this, arguments) : undefined;
+                };
+
+                // 初始執行一次
+                setTimeout(adjustNoteWidgetHeight, 100);
+
                 // 強制執行邏輯
                 node.onDrawBackground = function () {
                     if (this.size[0] < 400) this.size[0] = 400;
-
-                    // 動態調整 Note 高度 (讓它填滿底部空間)
-                    if (noteWidget) {
-                        // 計算除了 Note 以外所有 Widget 的預計高度加總 (大約值)
-                        // 通常一個標準 Widget 高度約為 30-40，如果是按鈕或 Label 也差不多
-                        // 我們可以根據當前 node.size[1] 減去固定偏移來計算
-                        // 或者動態計算除了最後一個 widget 以外的所有高度
-                        let otherWidgetsHeight = 0;
-                        for (const w of this.widgets) {
-                            if (w === noteWidget) continue;
-                            if (w.last_y !== undefined) {
-                                // 使用 last_y 可能是個好方法，但 ComfyUI 不一定更新它
-                            }
-                            // 預設給每個 Widget 35px 高度 (ComfyUI 標準)
-                            otherWidgetsHeight += 38;
-                        }
-
-                        // 額外加上標題列跟邊距高度
-                        const baseHeight = otherWidgetsHeight + 60;
-                        const remainingHeight = Math.max(60, this.size[1] - baseHeight);
-
-                        // 設置 Note widget 的高度
-                        noteWidget.computeSize = (w) => [w, remainingHeight];
-                    }
 
                     if (sameAsSub && subFolderName && fileName) {
                         const isSame = !!sameAsSub.value;
@@ -539,10 +562,13 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     }
 
                     // 執行即時過濾 (針對正在輸入的狀況)
-                    [{ w: mainFolderName, r: illegalCharsPath },
-                    { w: subFolderName, r: illegalCharsAll },
-                    { w: fileName, r: illegalCharsAll },
-                    { w: suffix, r: illegalCharsAll }].forEach(item => {
+                    const filterTargets = [];
+                    if (mainFolderName) filterTargets.push({ w: mainFolderName, r: illegalCharsPath });
+                    if (subFolderName) filterTargets.push({ w: subFolderName, r: illegalCharsAll });
+                    if (fileName) filterTargets.push({ w: fileName, r: illegalCharsAll });
+                    if (suffix) filterTargets.push({ w: suffix, r: illegalCharsAll });
+
+                    filterTargets.forEach(item => {
                         if (item.w && item.w.inputEl) {
                             const v = item.w.inputEl.value;
                             const c = v.replace(item.r, "");
