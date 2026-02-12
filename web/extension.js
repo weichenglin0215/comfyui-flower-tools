@@ -305,6 +305,117 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         };
     };
 
+    const setupCSTSConverter = (nodeType, nodeName) => {
+        if (nodeType.__flower_csts_setup_done) return;
+        nodeType.__flower_csts_setup_done = true;
+
+        // Message constants
+        const MESSAGES = {
+            INSTALLED: "✅ OpenCC is already installed! (OpenCC 已安裝)\n\nLocation info is printed in the server console.",
+            CONFIRM_INSTALL: "⚠️ OpenCC not found. Install now? (這可能需要一點時間)\n\n未檢測到 OpenCC。是否立即安裝？\n\n檢查後台黑色視窗(Console)可看到即時進度。\nCheck your ComfyUI console for live progress.",
+            INSTALLING: "⏳ Installing... Please wait.\n\nCheck the console window for live progress.\n正在安裝... 請稍候。請查看後台黑色視窗以獲取即時進度。",
+            SUCCESS: "✅ Installation Successful! Please RESTART ComfyUI.\n\n安裝成功！請重新啟動 ComfyUI 以生效。\n\n",
+            SUCCESS_ALERT: "✅ Installation Successful! Please RESTART ComfyUI.",
+            FAILED: "❌ Installation Failed.\n\n安裝失敗。\n\n",
+            FAILED_ALERT: "❌ Installation Failed. See details in the result box."
+        };
+
+        // Helper function to update result widget with text
+        const updateResultWidget = (widget, text) => {
+            if (!widget) return;
+            widget.value = text;
+            if (widget.inputEl) {
+                widget.inputEl.value = text;
+            }
+        };
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            // 1. Create read-only result widget
+            if (ComfyWidgets && ComfyWidgets["STRING"]) {
+                if (!this.widgets.find(w => w.name === "result_dialog")) {
+                    const res = ComfyWidgets["STRING"](this, "result_dialog", ["STRING", { multiline: true }], app).widget;
+                    res.label = "Conversion Result";
+                    res.value = "";
+                    res.serialize = false;
+
+                    // Set to read-only style
+                    if (res.inputEl) {
+                        res.inputEl.readOnly = true;
+                        res.inputEl.style.opacity = "0.7";
+                    }
+
+                    res.computeSize = () => [this.size[0], 100];
+                    this.resultWidget = res;
+                }
+            }
+
+            // 2. Create auto-install button
+            if (!this.widgets.find(w => w.name === "install_btn")) {
+                const btn = this.addWidget("button", "自動偵測並安裝 OPENCC", null, async () => {
+                    try {
+                        // Check if OpenCC is already installed
+                        const checkResp = await api.fetchApi("/flower-tools/check-opencc");
+                        const checkData = await checkResp.json();
+                        const resWidget = this.widgets.find(w => w.name === "result_dialog");
+
+                        if (checkData.installed) {
+                            const locationMsg = checkData.location ? `\n\n安裝位置 / Installed at:\n${checkData.location}` : "";
+                            const msg = `✅ OpenCC is already installed! (OpenCC 已安裝)${locationMsg}`;
+                            window.alert(msg);
+                            updateResultWidget(resWidget, msg);
+                            return;
+                        }
+
+                        // Confirm installation
+                        if (!window.confirm(MESSAGES.CONFIRM_INSTALL)) return;
+
+                        // Show installing message
+                        updateResultWidget(resWidget, MESSAGES.INSTALLING);
+
+                        // Execute installation
+                        const installResp = await api.fetchApi("/flower-tools/install-opencc", { method: "POST" });
+                        const installData = await installResp.json();
+
+                        // Handle result
+                        if (installData.success) {
+                            window.alert(MESSAGES.SUCCESS_ALERT);
+                            updateResultWidget(resWidget, MESSAGES.SUCCESS + installData.log);
+                        } else {
+                            window.alert(MESSAGES.FAILED_ALERT);
+                            updateResultWidget(resWidget, MESSAGES.FAILED + installData.log);
+                        }
+                        this.setDirtyCanvas(true);
+
+                    } catch (e) {
+                        window.alert("Error checking/installing OpenCC: " + e);
+                    }
+                });
+                btn.name = "install_btn";
+                btn.serialize = false;
+            }
+
+            // Set default node size
+            this.size[0] = 400;
+        };
+
+        // Handle execution results
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+            if (message.text) {
+                const res = this.widgets.find(w => w.name === "result_dialog");
+                if (res) {
+                    res.value = message.text[0];
+                    if (res.inputEl) res.inputEl.value = res.value;
+                    this.setDirtyCanvas(true);
+                }
+            }
+        };
+    };
+
     app.registerExtension({
         name: "Flower.MultilinePromptSelector.V31",
         async beforeRegisterNodeDef(nodeType, nodeData, app) {
@@ -312,6 +423,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupNode(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerKeywordReplacer") {
                 setupKeywordReplacer(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerCSTSConverter") {
+                setupCSTSConverter(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;
