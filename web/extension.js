@@ -63,7 +63,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 widget.last_count = file.count || "?";
 
                 // 設定高度 40 (35橫條 + 5間隔)
-                widget.computeSize = (w) => [w, 40];
+                widget.computeSize = (w) => [220, 40];
 
                 widget.draw = function (ctx, node, width, y, height) {
                     const config = node.fileConfigs?.[this.name] || { status: "disabled" };
@@ -127,7 +127,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 res.serialize = false;
 
                 // 設定高度
-                res.computeSize = () => [this.size[0], 150];
+                res.computeSize = (w) => [220, 150];
 
                 this.resultWidget = res;
             }
@@ -284,6 +284,64 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         };
     };
 
+    const setupStringComparison = (nodeType, nodeName) => {
+        if (nodeType.__flower_comparison_setup_done) return;
+        nodeType.__flower_comparison_setup_done = true;
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            const textA = this.widgets.find(w => w.name === "字串A");
+            const textB = this.widgets.find(w => w.name === "字串B");
+
+            // Define minimum heights (approx 2 lines = 50px)
+            const minWHeight = 60;
+
+            this.computeSize = function () {
+                let h = 30; // Title
+                for (const w of this.widgets) {
+                    if (w === textA || w === textB) {
+                        h += (w._last_h || minWHeight) + 4;
+                    } else {
+                        h += (w.computeSize ? w.computeSize(this.size[0])[1] : 24) + 4;
+                    }
+                }
+                return [220, Math.max(h, 250)];
+            };
+
+            const adjustHeights = () => {
+                let fixedHeight = 40; // Title + margins
+                for (const w of this.widgets) {
+                    if (w !== textA && w !== textB) {
+                        fixedHeight += (w.computeSize ? w.computeSize(this.size[0])[1] : 24) + 4;
+                    }
+                }
+
+                const remaining = Math.max(minWHeight * 2, this.size[1] - fixedHeight - 10);
+                const half = remaining / 2;
+
+                if (textA) {
+                    textA.computeSize = (w) => [220, half];
+                    textA._last_h = half;
+                }
+                if (textB) {
+                    textB.computeSize = (w) => [220, half];
+                    textB._last_h = half;
+                }
+            };
+
+            const oldOnResize = this.onResize;
+            this.onResize = function (size) {
+                adjustHeights();
+                return oldOnResize ? oldOnResize.apply(this, arguments) : undefined;
+            };
+
+            this.size = [400, 350];
+            setTimeout(adjustHeights, 100);
+        };
+    };
+
     const setupKeywordReplacer = (nodeType, nodeName) => {
         if (nodeType.__flower_replacer_setup_done) return;
         nodeType.__flower_replacer_setup_done = true;
@@ -297,7 +355,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             if (mainText) {
                 // ComfyUI 預設多行文本高度通常是 80 左右
                 // 我們將其設為 120 (約 6 行高度) 以符合用戶「目前的1.5倍高度」與「至少 3 行」
-                mainText.computeSize = (w) => [w, 120];
+                mainText.computeSize = (w) => [220, 120];
             }
 
             // 調整節點寬度以容納多組輸入
@@ -347,7 +405,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         res.inputEl.style.opacity = "0.7";
                     }
 
-                    res.computeSize = () => [this.size[0], 100];
+                    res.computeSize = (w) => [220, 100];
                     this.resultWidget = res;
                 }
             }
@@ -423,6 +481,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupNode(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerKeywordReplacer") {
                 setupKeywordReplacer(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerStringComparison") {
+                setupStringComparison(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerCSTSConverter") {
                 setupCSTSConverter(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
@@ -507,7 +567,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                             minH += wh + 4;
                         }
                     }
-                    return [400, minH];
+                    return [220, minH];
                 };
 
                 // 2. 填充邏輯：將 Note 擴展到當前節點所剩的所有空間
@@ -526,7 +586,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
                     if (noteWidget._last_computed_height !== newHeight) {
                         // 更新 computeSize 讓 Note 的 DOM 元素 (textarea) 實際變長
-                        noteWidget.computeSize = (w) => [w, newHeight];
+                        noteWidget.computeSize = (w) => [220, newHeight];
                         noteWidget._last_computed_height = newHeight;
                     }
                 };
@@ -543,7 +603,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
                 // 強制執行邏輯
                 node.onDrawBackground = function () {
-                    if (this.size[0] < 400) this.size[0] = 400;
+                    if (this.size[0] < 220) this.size[0] = 220;
 
                     if (sameAsSub && subFolderName && fileName) {
                         const isSame = !!sameAsSub.value;
