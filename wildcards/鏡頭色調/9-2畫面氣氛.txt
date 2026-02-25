@@ -1,0 +1,33 @@
+/*1氣氛：史詩壯麗*/ moody, epic, gorgeous, magical, extremely coherent, unique, cool, intricate,
+/*2氣氛：創意驚艷*/ infinite creativity, beyond imagination, complex and exquisite with full details, stunning, positive, cheerful, very inspirational,
+/*3氣氛：理性純潔*/ pure, friendly, rational, perfect,
+/*4氣氛：可愛迷人又理性純潔*/ cute, beautiful, lovely, wonderful, pure, friendly, rational, perfect,
+/*5氣氛：可愛迷人*/ cute, beautiful, lovely, wonderful,
+/*6氣氛：可愛迷人又優雅高貴*/ cute, beautiful, lovely, wonderful,elegant, noble, generous, temperament, romantic, emotional, harmonious,
+/*7氣氛：優雅高貴*/ elegant, noble, generous, temperament, romantic, emotional, harmonious,
+/*8氣氛：林布蘭燈光*/ Rembrandt lighting, brush strokes, warm light, eye catchlights, vignette, shot on kodak, 35mm photo, sharp focus, film grain, grainy, high budget, cinemascope,
+/*9氣氛：霧氣淺景深*/ atmospheric haze, atmospheric lighting, Film grain, grainy, cinematic film still, shallow dof, shallow depth of field, highly detailed, high budget, cinemascope, moody, epic, 2000s vintage RAW photo, photorealistic, candid camera, color graded cinematic, imperfections,
+/*10氣氛：傳統與現代交融*/ adding to the spectacle of the moment, In this moment, the convergence of tradition and technology, both of ancient wisdom and industrial progress hangs palpably in the air,
+/*11氣氛：純淨簡約自然柔和影子*/ Serene digital painting, minimalist, pastel hues, dreamlike calm, wide-angle lens, elegant negative space, lighting is natural and diffused, casting soft shadows that emphasize the texture of the smooth, Atmosphere is surreal yet grounded combining science fiction with everyday realism, cinematic depth of field, vivid clarity,
+/*12氣氛：充滿動感女人*/ a dynamic action scene of a female in a windy environment, high speed move with motion blur, flowing hair and billowing clothes, wind-blown clothes, dynamic pose, vibrant movement, (dramatic twirl:1.5), hyper-realistic, epic fantasy art, long exposure effect, 
+/*13氣氛：動態模糊-紫棕詭譎色調*/ lens flares, lens purpura,(environment blurred in motion:2.0), symbolizing stillness in chaos, Realism, moody ambient lighting, noir detective movie, extremely hyper aesthetic, disturbing, extremely detailed, mystifying, color palette is dominated by purple and brown,
+/*14氣氛：藍棕詭譎色調*/ while everyone else around her is blurred in motion, symbolizing stillness in chaos, Realism, moody ambient lighting, The color palette is dominated by blues and brown,
+/*15氣氛：海報*/ A movie poster include the tagline, Ensure the overall aesthetic is modern, sophisticated, and visually striking while maintaining a lighthearted and charming tone. The title is prominently displayed in an elegant, whimsical colorful font at the top. At the bottom of the poster, include colorful prestigious award logos, such as the Oscar, Cannes Film Festival, Golden Globe, Sundance Film Festival, and Venice Film Festival, showcasing the movie's recognition and achievements,
+/*16氣氛：十公里-灰色調-動態模糊*/ color palette is dominated by brown and blue and grey, lens flares, lens purpura,(environment blurred in motion:2.0), symbolizing stillness in chaos, Realism, moody ambient lighting, noir detective movie, extremely hyper aesthetic, disturbing, extremely detailed, mystifying,
+/*17氣氛：混亂髒污*/ low exposure, dim light, dark, HDR,chaos, conflict, dirty, damaged, broken, exploded, dark soot, white smoke, sparks, flashes, debris, fog, pain, wailing, violence,
+/*18電影感：低角度動態視角*/ Cinematic composition, dynamic low-angle shot, dutch angle view, tilted angle view, dramatic lighting, intense motion blur, epic wide-angle view, vibrant colors, volumetric fog,
+/*19電影感：高角度動態視角*/ Cinematic composition, dynamic bird's eye view, from above view, dutch angle view, tilted angle view, dramatic lighting, intense motion blur, epic wide-angle view, vibrant colors, volumetric fog,
+/*20電影感：低角度動態視角與電影化氛圍*/ Cinematic composition, dynamic low-angle shot, dramatic lighting, intense motion blur, epic wide-angle view, vibrant colors, volumetric fog, inspired by Christopher Nolan,
+/*21電影感：追逐與速度感-銀翼殺手*/ High-speed chase perspective, dynamic camera tilt, sweeping motion, neon-lit cityscape, sharp depth of field, cyberpunk aesthetic, inspired by Blade Runner,
+/*22電影感：英雄式視角-魔戒*/ Heroic POV, dramatic upward angle, golden hour lighting, lens flare, flowing cape in wind, powerful stance, epic fantasy landscape, inspired by Lord of the Rings,
+/*23電影感：緊張的追焦效果-John Wick*/ Cinematic tracking shot, shallow depth of field, subject in sharp focus, blurred background, moody twilight tones, rain-soaked streets, inspired by John Wick,
+/*24電影感：廣角史詩構圖-瘋狂麥斯*/ Ultra-wide cinematic shot, sweeping panoramic view, dramatic clouds, intense chiaroscuro lighting, figures in motion, epic battle scene, inspired by Mad Max Fury Road,
+/*25*/模仿日本街頭攝影師 Tatsuo Suzuki 的攝影風格，黑白街頭攝影照片。畫面高對比黑白、超近距離的人像街拍，閃光燈拍攝，畫面動態模糊，用強烈的壓迫感去呈現東京街頭的情緒與張力。
+/*26*/抽幀 Step-printing 王家衛電影效果。讓主角保持相對清晰靜止，而背景的人物和光影則呈現出一種拖影、模糊的流動感，極強地表現出人物在繁忙中的孤獨與時間的流逝。
+/*27*/这是一张典型的抖音情绪向短视频封面，“反差”与“扎心”属性。充满“一个人的空虛生活”的孤独感。属于一看标题就忍不住点进去的典型情绪流量封面。
+/*28*/整幅畫面光線柔和，色調清新，彷彿置身於桂林山水與童話世界的完美融合之中。氣氛寧靜而活潑，充滿了童真和自然之美，令人一見傾心。
+/*29*/以傳統中國美學用色，單一色調，簡約風格，簡化細節，沉穩大方，構圖刻意偏重於大塊面而失衡。充滿靈氣與禪意風格，讓觀眾眼睛能依直聚焦在畫面上隨著構圖而流動。
+/*30*/投射树叶剪影的光影（可见叶片轮廓与阳光穿透缝隙的光斑）。整体在暖金色阳光环境下，头发的光泽与造型、衣物的毛绒复古质感、枯叶的纹理与动态褶皱以及背景建筑的色彩对比、光影的诗意层次等细节高度还原，呈现真实秋日艺术质感。
+/*31電影感英文版*/ atmospheric haze, Film grain, cinematic film still, shallow depth of field, highly detailed, high budget, cinemascope, moody, epic, OverallDetail, 2000s vintage RAW photo, photorealistic, candid camera, color graded cinematic, atmospheric lighting, imperfections, natural, shallow dof,
+/*32*/大氣霧霾、膠卷顆粒、電影劇照、淺景深、細節豐富、高預算、寬銀幕、氛圍感強、史詩感、整體細節、2000 年代復古 RAW 照片、照片級真實感、抓拍、電影級調色、氛圍照明、瑕疵、自然、淺景深。
+/*33*/展現了未來科幻賽博龐克風格的場景，佈滿了相互連接的科幻賽博龐克機械裝置，周圍環繞著各種電線和電子設備，散發出柔和的光芒，牆上貼滿了略微起皺或破損的大幅動漫海報，上面還釘著手寫的便條和圖畫。夜晚的現代化都市迷人景色，霓虹燈和廣告看板交相輝映。房間裡瀰漫著生活氣息，散落著電線、紙張和污漬斑斑的地毯。整體光線略顯昏暗，部分區域處於陰影之中。這張影像採用寶麗來風格的魚眼鏡頭，以極低的動態角度拍攝，營造出獨特而身臨其境的視角，紋理和景深清晰可見。逼真的紋理、淺景深和電影級的燈光效果，增強了場景的真實感和親密感，呈現出令人嘆為觀止、難以忘懷的視覺效果。

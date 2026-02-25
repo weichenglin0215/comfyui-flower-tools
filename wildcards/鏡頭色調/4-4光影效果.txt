@@ -1,0 +1,8 @@
+/*1光影效果：光斑*/ lens flare, soft bokeh effects with glowing orbs,
+/*2光影效果：耶穌光*/ god rays, lens flare, golden sunlight streaming through dense clouds, volumetric god rays piercing through mist, soft dust particles floating in the air, ethereal and divine atmosphere,
+/*3光影效果：百葉窗光影*/ light streaming through wooden blinds, sharp striped shadows cast on a dusty floor, soft dust motes in the air, moody and cinematic atmosphere, film noir style,
+/*4光影效果：陽光透過樹葉灑落（Dappled Sunlight）*/ golden sunlight filtering through dense tree leaves, dappled light patterns on the mossy ground, soft breeze, warm and tranquil atmosphere,
+/*5光影效果：舞廳玻璃球反光（Disco Ball Reflections）*/ light casting colorful light reflections across the room, shimmering sparkles on walls and dancers, neon hues of pink, blue, and gold,
+/*6光影效果：七彩雷射光（Colorful Laser Beams）*/ vibrant rainbow laser beams cutting through thick fog, glowing neon colors of red, blue, and purple, reflective metallic surfaces,
+/*7光影效果：霓虹光在雨中反射（Neon Reflections in Rain）*/ vibrant neon lights reflecting on wet pavement, raindrops scattering pink and blue glows, foggy air, futuristic and moody atmosphere,
+/*8光影效果：彩色玻璃窗光影（Stained Glass Light Patterns）*/ sunlight streaming through stained glass windows, vibrant multicolored light patterns on stone floors, dusty air, sacred and majestic atmosphere,

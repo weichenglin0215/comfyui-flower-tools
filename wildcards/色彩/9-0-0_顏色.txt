@@ -1,0 +1,91 @@
+/*紅色*/ Red 
+/*紅色螢光*/ Neon Red 
+/*粉紅色*/ Pink 
+/*粉紅螢光*/ Neon Pink 
+/*腮紅粉*/ Blush Pink 
+/*莧菜紅*/ Amaranth 
+/*胭脂紅*/ Carmine 
+/*櫻桃紅*/ Cherry 
+/*赤紅*/ Crimson 
+/*磚紅色*/ Brick red 
+/*珊瑚色*/ Coral 
+/*酒紅色*/ Burgundy 
+/*橙色*/ Orange 
+/*橙色螢光*/ Neon Orange 
+/*焦橙色*/ Burnt orange 
+/*杏色*/ Apricot 
+/*黃色*/ Yellow 
+/*黃色螢光*/ Neon Yellow 
+/*檸檬黃*/ Lemon 
+/*金絲雀黃*/ Canary 
+/*琥珀色*/ Amber 
+/*綠色*/ Green 
+/*綠色螢光*/ Neon Green 
+/*草綠色*/ Grass green 
+/*森林綠*/ Forest green 
+/*深綠色*/ Dark green 
+/*翡翠綠*/ Emerald 
+/*橄欖綠*/ Olive 
+/*蘋果綠*/ Apple green 
+/*青瓷綠*/ Celadon 
+/*凱利綠*/ Kelly green 
+/*查特酒綠*/ Chartreuse 
+/*酪梨綠*/ Avocado 
+/*碧玉綠*/ Jade 
+/*青色*/ Teal 
+/*水藍色*/ Aqua 
+/*天青色*/ Cyan
+/*天青色螢光*/ Neon Cyan
+/*藍色*/ Blue 
+/*藍色螢光*/ Neon Blue 
+/*天空藍*/ Sky blue 
+/*藍寶石藍*/ Sapphire 
+/*海軍藍*/ Navy 
+/*天藍色*/ Cerulean 
+/*鈷藍色*/ Cobalt 
+/*電光藍*/ Electric blue 
+/*軍校藍*/ Cadet blue 
+/*牛仔藍*/ Denim 
+/*嬰兒藍*/ Baby blue 
+/*天藍色*/ Azure 
+/*紫色*/ Purple 
+/*紫色螢光*/ Neon Purple 
+/*紫羅蘭色*/ Violet 
+/*丁香紫*/ Lilac 
+/*紫水晶*/ Amethyst 
+/*薰衣草紫*/ Lavender 
+/*洋紅色*/ Magenta 
+/*蘭花紫*/ Orchid 
+/*李子紫*/ Plum 
+/*桃花心木色*/ Mahogany 
+/*紫紅色*/ Fuchsia 
+/*靛藍色*/ Indigo 
+/*深紫色*/ Deep purple 
+/*赤褐色*/ Auburn 
+/*栗色*/ Chestnut 
+/*巧克力棕*/ Chocolate Brown 
+/*棕色*/ Brown 
+/*肉桂色*/ Cinnamon 
+/*焦糖色*/ Caramel 
+/*玫瑰金*/ Rose Gold 
+/*鐵鏽色*/ Rust 
+/*銅色*/ Copper 
+/*古銅色*/ Antique brass 
+/*黃銅色*/ Brass 
+/*青銅色*/ Bronze 
+/*黑色*/ Black 
+/*藍黑色*/ Blue-Black 
+/*墨黑色*/ Jet Black 
+/*白色*/ White 
+/*象牙白*/ Alabaster 
+/*象牙色*/ Ivory 
+/*奶油色*/ Cream 
+/*灰色*/ Gray 
+/*炭灰色*/ Charcoal 
+/*銀色*/ Silver 
+/*金色*/ Gold 
+/*金色*/ Blonde 
+/*鉑金色*/ Platinum 
+/*香檳色*/ Champagne 
+/*米色*/ Beige 
+/*蜂蜜色*/ Honey 

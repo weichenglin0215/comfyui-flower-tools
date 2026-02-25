@@ -1,5 +1,5 @@
 """
-FlowerCSTSConverter - Simplified/Traditional Chinese Text Converter
+FlowerTCSCConverter - Simplified/Traditional Chinese Text Converter
 Uses OpenCC library to convert between Simplified and Traditional Chinese with Taiwan localization.
 """
 
@@ -22,7 +22,7 @@ try:
 except ImportError:
     HAS_OPENCC = False
 
-class FlowerCSTSConverter:
+class FlowerTCSCConverter:
     """
     ComfyUI node for converting between Simplified and Traditional Chinese.
     Supports Taiwan-specific vocabulary using OpenCC library.
@@ -200,5 +200,5 @@ def _get_install_location():
         return ""
 
 
-NODE_CLASS_MAPPINGS = {"FlowerCSTSConverter": FlowerCSTSConverter}
-NODE_DISPLAY_NAME_MAPPINGS = {"FlowerCSTSConverter": "🌸Flower CSTS Converter"}
+NODE_CLASS_MAPPINGS = {"FlowerTCSCConverter": FlowerTCSCConverter}
+NODE_DISPLAY_NAME_MAPPINGS = {"FlowerTCSCConverter": "🌸Flower TCSC Converter"}

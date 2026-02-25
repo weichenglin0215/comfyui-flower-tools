@@ -1,0 +1,31 @@
+/*1畫面可以維持明亮------*/專業電影等級燈光，凸顯主題，豐富明暗層次，高反差，高動態範圍。
+/*2畫面會變暗------*/專業電影等級燈光，凸顯主題，豐富明暗層次，高反差，高動態範圍，深邃的陰影層次，戲劇性氛圍。
+/*3畫面會變更暗------*/專業電影等級燈光，林布蘭燈光風格(Rembrandt lighting)，凸顯主題，豐富明暗層次，高反差，高動態範圍，深邃的陰影層次，戲劇性氛圍。
+/*4畫面有暈光、光束------*/專業電影等級燈光，丁達爾效應 (Tyndall effect)，凸顯主題，豐富明暗層次，高反差，高動態範圍，深邃的陰影層次，戲劇性氛圍。
+/*5畫面會變更暗又有暈光、光束------*/專業電影等級燈光，林布蘭燈光風格(Rembrandt lighting)，丁達爾效應 (Tyndall effect)，凸顯主題，豐富明暗層次，高反差，高動態範圍，深邃的陰影層次，戲劇性氛圍。
+/*6燈光：柔和環境光------*/ Soft ambient light, smoother lighting,
+/*7燈光：明亮照明------*/ brightening lighting, smoother lighting,
+/*8燈光：天光明亮照明------*/ skylight, brightening lighting, smoother lighting,
+/*9燈光：高反差照明------*/ high contrast, High-Key lighting, deep shadow, overexposure,
+/*10燈光：低調照明*/ Dimly Lit lighting, Low-Key lighting, dark, dark tone, in the dark, low key, deep shadow, cold hue, cold tone,
+/*11燈光：室內舒適暖色照明*/ cozy indoor lighting, yellow tint, yellow tone, warm hue,
+/*12燈光：室內日光燈照明*/ Fluorescent lighting, blue tint, blue tone, cold hue,
+/*13燈光：城市霓虹街燈光*/ City Streetlights lighting, Neon Lights,
+/*14燈光：影棚燈光*/ Studio lighting, brightening light, rim light effect, light ray tracing,
+/*15燈光：林布蘭光照*/ Rembrandt lighting, Dimly Lit Light, Low-Key lighting, rim light effect,
+/*16燈光：背光剪影光邊緣光*/ Backlight, Silhouette Light, Halos Light, Rim lighting, rim light effect,
+/*17燈光：邊緣光照明*/ Rim lighting, rim light effect,
+/*18燈光：側光*/ Side lighting, rim light effect,
+/*19燈光：聚光燈*/ Spotlight Light,
+/*20燈光：百葉窗抽象光影圖案*/ Abstract Light Patterns, Strip Light,
+/*21燈光：強烈陽光*/ Harsh Sunlight, lens flare,
+/*22燈光：曙暮光束霧光*/ Fog and Mist Light, volumetric lighting,
+/*23燈光：日出暖光*/ Sunrise Warmth Light, yellow tint, yellow tone, warm hue,
+/*24燈光：夕陽餘暉*/ Sunset Glow Light, orange tint, orange tone, warm hue,
+/*25燈光：暮色光暈*/ Golden hour lighting, Twilight Hues lighting, yellow tint, yellow tone, warm hue,
+/*26燈光：日落後藍色時刻光*/ Blue Hour lighting, blue tint, blue tone, cold hue,
+/*27燈光：月光*/ Moonlight, blue tint, blue tone, cold hue,
+/*28燈光：奇異的光帶或光班*/ extremely luminous bright design,
+/*29燈光：耶穌光*/ god rays, lens flare,
+/*30燈光：生物螢光*/ bioluminescent details,
+/*31燈光：黑暗區域的微弱光源*/ glowing, dim light, dark,

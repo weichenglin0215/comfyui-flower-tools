@@ -1,0 +1,10 @@
+/*1*/傑作，最佳品質, 超詳細, 超高解析, 戲劇燈光, 電影品質, 呈現豐富細節與紋理， 
+/*2*/傑作，最佳品質, 超詳細, 超高解析, 景深, 模糊背景， 戲劇燈光, 電影品質, 呈現豐富細節與紋理，高對比度，明亮的高光，深邃的陰影， 
+/*3畫質：基本(減少干擾)*/ masterpiece, 傑作,
+/*4畫質：簡潔*/ simple, finely detail, light grey background, simple background, harmonious colors,
+/*5畫質：豐富細節*/ ultra-detailed, masterpiece, best quality, ultra high res, extremely delicate and beautiful, extremely intricate, vibrant details,
+/*6畫質：寫實強調人臉*/ photo realistic, finely details, real eyes, real face, real skin, dry skin, film grain,
+/*7畫質：寫實不涉及人臉*/ photo realistic, real skin, dry skin, finely details, vibrant details, film grain,
+/*8畫質：寫實豐富細節*/ photo realistic, extremely delicate and beautiful, extremely intricate, vibrant details, realistic, film grain,
+/*9畫質：明亮數位化*/ digital art, digital artwork, masterpiece, best quality, ultra high res, beautiful, unity, finely detail, vibrant details, 4k wallpaper, HDR, tetradic colors in details, midjourney, volumetric light, light diffusion, light ray tracing, digital art,
+/*10畫質：藝術氣息*/ official art, classic artwork, masterpiece, best quality, ultra high res, beautiful, unity, finely detail, vibrant details, Amazing, aesthetics, official art, extremely intricate, art nouveau style, colorfulness, chroma, saturation,

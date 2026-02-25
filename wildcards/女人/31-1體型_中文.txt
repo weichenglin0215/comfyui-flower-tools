@@ -1,0 +1,17 @@
+厭食症/*anorexic body,*/
+骨瘦如柴體型/*skinny body,*/
+苗條體型/*slim body,*/
+嬌小體型/*petite body,*/
+漂亮體型/*pretty body,*/
+健美體型/*fit body,*/
+運動型體型/*athletic body,*/
+肌肉發達體型/*muscular body,*/
+曲線優美體型/*curvy body,*/
+豐滿性感體型/*hefty body, voluptuous body,*/
+胖體型/*fat body,*/
+豐腴有油體型/*plump body, chubby body,*/
+超重體型/*overweight body,*/
+肥胖體型/*obese body,*/
+病態肥胖體型/*morbidly obese body,*/
+懷孕初期體型/*early pregnant body,*/
+孕婦體型/*pregnant body,*/

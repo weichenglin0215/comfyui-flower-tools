@@ -1,0 +1,11 @@
+正面視角, front view, 
+從背後拍攝, view from behind, 背面視角, back view
+右側面視角, profile view, right side view,
+左側面視角, profile view, left side view,
+正面右側45度視角, front view, side view,
+正面左側45度視角, front view, side view,
+四分之三側面視角, three-quarter view, 
+背面右側45度視角, back view, side view,
+背面左側45度視角, back view, side view,
+第一人稱視角, First-person perspective, POV, 
+過肩鏡頭, over-the-shoulder shot, 

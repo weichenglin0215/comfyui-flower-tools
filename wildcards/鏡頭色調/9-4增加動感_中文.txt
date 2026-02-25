@@ -1,0 +1,7 @@
+/*1*/動態燈光, 動態姿勢, 動態拍攝角度。
+/*2*/動態美感，動態燈光, 動態姿勢, 動態拍攝角度。/*所有東西都飛揚起來*/
+/*3*/融合動態、力道與美感，動態燈光, 動態姿勢, 動態拍攝角度。/*所有東西都飛揚起來*/
+/*4*/dynamic shot angle, 
+/*5*/dynamic lighting, dynamic pose, dynamic shot angle, 
+/*6*/dynamism, aesthetics, dynamic lighting, dynamic pose, dynamic shot angle, 
+/*7*/blends dynamism and power and aesthetics with dynamic lighting, dynamic pose, dynamic shot angle, 

@@ -34,10 +34,10 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         const rebuildFileButtons = function (node, filesFromApi) {
             if (!node.widgets) return;
 
-            // 1. 固定鎖定前 7 個 (索引 0-6)。其餘全部移除
-            if (node.widgets.length > 7) {
-                for (let i = node.widgets.length - 1; i >= 7; i--) {
-                    const w = node.widgets[i];
+            // 1. 固定保留前面的基底元件，清除其他產生的檔案按鈕
+            for (let i = node.widgets.length - 1; i >= 0; i--) {
+                const w = node.widgets[i];
+                if (!w.is_base_widget) {
                     if (w.inputEl) w.inputEl.remove();
                     node.widgets.splice(i, 1);
                 }
@@ -54,12 +54,31 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 }));
             }
 
-            // 3. 從索引 7 開始新增按鈕，並加入間距
+            // 🌸 關鍵修復：這裡我們將這由 asciiSort 排好序的清單「依序」存回 node.fileConfigs 🌸
+            // Python 後端只要照著 configs.keys() 的順序解析，就絕對會和 Frontend 完全相同的順序執行。
+            if (Object.keys(node.fileConfigs || {}).length > 0) {
+                const orderedConfigs = {};
+                for (const file of displayList) {
+                    if (node.fileConfigs[file.name]) {
+                        orderedConfigs[file.name] = node.fileConfigs[file.name];
+                    } else {
+                        orderedConfigs[file.name] = { status: "disabled", count: file.count || "?" };
+                    }
+                }
+                node.fileConfigs = orderedConfigs;
+
+                const cfw = node.widgets.find(w => w.name === "file_configs");
+                if (cfw) cfw.value = JSON.stringify(node.fileConfigs, null, 2);
+            }
+
+            // 3. 依序重新加入這堆按鈕，確保維持間距
             for (const file of displayList) {
                 const widget = node.addWidget("button", file.name, null, () => {
                     node.showSelectionPopup(file.name);
                 });
                 widget.type = "button";
+                widget.serialize = false;
+                widget.is_base_widget = false;
                 widget.last_count = file.count || "?";
 
                 // 設定高度 40 (35橫條 + 5間隔)
@@ -113,10 +132,14 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             this.size = [800, 550]; // 預設給大一點，確保存活
             this.fileConfigs = {};
 
+            // 標記來自 Python 的原生 Widgets
+            if (this.widgets) {
+                for (const w of this.widgets) {
+                    w.is_base_widget = true;
+                }
+            }
+
             // --- 🌸 建立核心地基 (索引順序守護) 🌸 ---
-
-            // 前面四個由 Python 給定: directory(0), seed(1), seed_control(2), continuous_processing(3), file_configs(4)
-
             // 4. Result (result_dialog) - 改用 ComfyUI 標準元件寫法。
             if (!this.widgets.find(w => w.name === "result_dialog")) {
                 // 使用 ComfyUI 官方的多行文本元件建立方式
@@ -128,6 +151,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
                 // 設定高度
                 res.computeSize = (w) => [220, 150];
+                res.is_base_widget = true;
 
                 this.resultWidget = res;
             }
@@ -181,21 +205,10 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 });
                 btn.name = "refresh_btn";
                 btn.serialize = false;
+                btn.is_base_widget = true;
             }
 
-            // --- 強制地基排序 (防止索引偏移) ---
-            const baseOrder = ["directory", "seed", "seed_control", "continuous_processing", "file_configs", "result_dialog", "refresh_btn"];
-            const reorder = () => {
-                baseOrder.forEach((name, targetIdx) => {
-                    const idx = this.widgets.findIndex(w => w.name === name);
-                    if (idx !== -1 && idx !== targetIdx) {
-                        const w = this.widgets.splice(idx, 1)[0];
-                        this.widgets.splice(targetIdx, 0, w);
-                    }
-                });
-            };
-            reorder();
-
+            // 我們不再使用 reorder，因為重排序會打亂 ComfyUI Widget 陣列索引，導致讀檔時數值對錯欄位！
             return undefined;
         };
 
@@ -363,9 +376,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         };
     };
 
-    const setupCSTSConverter = (nodeType, nodeName) => {
-        if (nodeType.__flower_csts_setup_done) return;
-        nodeType.__flower_csts_setup_done = true;
+    const setupTCSCConverter = (nodeType, nodeName) => {
+        if (nodeType.__flower_tcsc_setup_done) return;
+        nodeType.__flower_tcsc_setup_done = true;
 
         // Message constants
         const MESSAGES = {
@@ -483,8 +496,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupKeywordReplacer(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerStringComparison") {
                 setupStringComparison(nodeType, nodeData.name);
-            } else if (nodeData.name === "FlowerCSTSConverter") {
-                setupCSTSConverter(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerTCSCConverter") {
+                setupTCSCConverter(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;
