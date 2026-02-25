@@ -11,11 +11,12 @@
 
 ### 方法 1: 使用 ComfyUI Manager (推薦)
 1.  開啟 **ComfyUI Manager**。
-2.  點擊 **"Install via Git URL"**。
+2.  搜尋 **Comfyui Flower Tools***。
+2.  或點擊 **"Install via Git URL"**。
 3.  輸入本專案網址: `https://github.com/weichenglin0215/comfyui-flower-tools`
 4.  安裝完成後重啟 ComfyUI。
 
-### 方法 2: 手動安裝
+### 方法 2: 手動安裝(使用CMD視窗)
 1.  進入您的 ComfyUI `custom_nodes` 目錄。
 2.  執行 `git clone https://github.com/weichenglin0215/comfyui-flower-tools.git`
 3.  重啟 ComfyUI。
@@ -49,13 +50,13 @@
 	通常用在產出多張預先寫好的分類提示詞，自己構思或在網路上學習的提示詞，分門別類記錄在不同文字檔案中。
 	例如在wildcards目錄下的幾個範本文字檔"咒語列表_普級_日式少女寫真.txt"、"咒語列表_普級_可愛清新.txt"
 	透過這個節點可以連續產出相關圖檔。
-![FlowerMultilinePromptSelector_Sequential](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerMultilinePromptSelector_Sequential.png)
+![FlowerMultilinePromptSelector_Sequential](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerMultilinePromptSelector_Sequential.png)
 
     *   **組合模式 (Combination)**: 每個啟用的檔案各自輸出一行，並組合為一個長句子。
 	通常用於多變化的組合，例如每張圖片使用不同國籍的女性、年紀、表情與體型。
 	搭配🌸 Flower Keyword Replacer (關鍵字替換器)，可以輸出多變化的提示詞。
 	請參考"wildcards\女人"目錄下的多個提示詞文檔。
-![FlowerMultilinePromptSelector_Combination](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerMultilinePromptSelector_Combination.png)
+![FlowerMultilinePromptSelector_Combination](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerMultilinePromptSelector_Combination.png)
 
 ---
 
@@ -75,7 +76,7 @@
 *   將 `*WOMAN*` 替換成 `一位青春洋溢的18歲少女，表情自然帶笑`。
 *   將 `*Color*` 替換成 `駝色`。
 
-![FlowerKeywordReplacer_demo](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerKeywordReplacer_demo.png)
+![FlowerKeywordReplacer_demo](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerKeywordReplacer_demo.png)
 
 ---
 
@@ -88,7 +89,7 @@
 *   **自訂分隔符 (Delimiter)**: 可設定連接字串時的中間符號 (如 `,` 或 `\n`)。
 *   **雙輸出**: 同時輸出 "合併後的單一字串" 與 "字串列表 (List)"。
 
-![FlowerListofStrings_demo](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerListofStrings_demo.png)
+![FlowerListofStrings_demo](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerListofStrings_demo.png)
 
 ---
 
@@ -110,7 +111,7 @@
 *   `%DATE`: 日期 (如 2024-02-10)
 *   `%TIME`: 時間 (如 12-30-59)
 
-![FlowerFileNameCombination_demo](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerFileNameCombination_demo.png)
+![FlowerFileNameCombination_demo](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerFileNameCombination_demo.png)
 
 ---
 
@@ -124,20 +125,20 @@
 *   **自動安裝**: 內建一鍵安裝 OpenCC 依賴庫功能，自動偵測並修復環境問題 (支援 Windows/Linux)。
 *   **唯讀預覽**: 轉換結果顯示於唯讀文字框，方便直接複製或檢視。
 
-![FlowerTCSCConverter_OK](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerTCSCConverter_OK.png)
+![FlowerTCSCConverter_OK](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerTCSCConverter_OK.png)
 
 **安裝說明：**
 * 未安裝或執行錯誤時，請點擊"install_btn"按鍵，會自動安裝OpenCC在**ComfyUI_windows_portable_Audio\python_embeded\Lib\site-packages\opencc**
-![FlowerTCSCConverter_error](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerTCSCConverter_error.png)
+![FlowerTCSCConverter_error](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerTCSCConverter_error.png)
 
 * 安裝前會跳出提示視窗，請點擊"確定"
-![FlowerTCSCConverter_install1](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerTCSCConverter_install1.png)
+![FlowerTCSCConverter_install1](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerTCSCConverter_install1.png)
 
 * 指令視窗中會顯示安裝過程
-![FlowerTCSCConverter_install2](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerTCSCConverter_install2.png)
+![FlowerTCSCConverter_install2](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerTCSCConverter_install2.png)
 
 * 安裝成功
-![FlowerTCSCConverter_install3](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerTCSCConverter_install3.png)
+![FlowerTCSCConverter_install3](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerTCSCConverter_install3.png)
 
 ---
 
@@ -149,7 +150,7 @@
 *   **大視窗顯示**: 優化了 UI 排版，提供兩個大型文字框方便放入長內容。
 *   **多重比對方式**: 從前面或後面開始比對、比對次數與區分大小寫。。
 
-![FlowerStringComparison_demo](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerStringComparison_demo.png)
+![FlowerStringComparison_demo](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerStringComparison_demo.png)
 
 ---
 
@@ -162,7 +163,7 @@
 *   **區塊註解**: 支援過濾預設由 `/*` 開頭並由 `*/` 結尾的區塊註解。
 *   **自定義符號**: 可自行修改註解的開始與結束符號，相容性高。
 
-![FlowerRemoveCommentedText_demo](https://github.com/weichenglin0215/comfyui-flower-tools/images/FlowerRemoveCommentedText_demo.png)
+![FlowerRemoveCommentedText_demo](https://github.com/weichenglin0215/comfyui-flower-tools/tree/main/images/FlowerRemoveCommentedText_demo.png)
 
 ---
 
