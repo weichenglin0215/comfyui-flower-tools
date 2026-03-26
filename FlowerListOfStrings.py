@@ -28,9 +28,9 @@ class FlowerListOfStrings:
         
         for i in range(1, 11):
             val = kwargs.get(f"string_{i}", "")
-            # Even if empty, we might want to include it if the user intended 10 fixed slots
-            # But usually, it's better to only process non-empty ones or all of them?
-            # The prompt says "固定十個STRING輸入", implying they exist.
+            # 若該欄位為空值，則不加入
+            if val == "":
+                continue
             
             string_list.append(val)
             

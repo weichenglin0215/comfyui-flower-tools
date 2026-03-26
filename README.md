@@ -50,13 +50,15 @@
 	通常用在產出多張預先寫好的分類提示詞，自己構思或在網路上學習的提示詞，分門別類記錄在不同文字檔案中。
 	例如在wildcards目錄下的幾個範本文字檔"咒語列表_普級_日式少女寫真.txt"、"咒語列表_普級_可愛清新.txt"
 	透過這個節點可以連續產出相關圖檔。
-![FlowerMultilinePromptSelector_Sequential](images/FlowerMultilinePromptSelector_Sequential.png)
+	
+	![FlowerMultilinePromptSelector_Sequential](images/FlowerMultilinePromptSelector_Sequential.png)
 
     *   **組合模式 (Combination)**: 每個啟用的檔案各自輸出一行，並組合為一個長句子。
 	通常用於多變化的組合，例如每張圖片使用不同國籍的女性、年紀、表情與體型。
 	搭配🌸 Flower Keyword Replacer (關鍵字替換器)，可以輸出多變化的提示詞。
 	請參考"wildcards\女人"目錄下的多個提示詞文檔。
-![FlowerMultilinePromptSelector_Combination](images/FlowerMultilinePromptSelector_Combination.png)
+	
+	![FlowerMultilinePromptSelector_Combination](images/FlowerMultilinePromptSelector_Combination.png)
 
 ---
 
@@ -129,15 +131,19 @@
 
 **安裝說明：**
 * 未安裝或執行錯誤時，請點擊"install_btn"按鍵，會自動安裝OpenCC在**ComfyUI_windows_portable_Audio\python_embeded\Lib\site-packages\opencc**
+
 ![FlowerTCSCConverter_error](images/FlowerTCSCConverter_error.png)
 
 * 安裝前會跳出提示視窗，請點擊"確定"
+
 ![FlowerTCSCConverter_install1](images/FlowerTCSCConverter_install1.png)
 
 * 指令視窗中會顯示安裝過程
+
 ![FlowerTCSCConverter_install2](images/FlowerTCSCConverter_install2.png)
 
 * 安裝成功
+
 ![FlowerTCSCConverter_install3](images/FlowerTCSCConverter_install3.png)
 
 ---
@@ -188,6 +194,9 @@ ComfyUI/
 
 ## 📜 更新日誌 (Changelog)
 
+*   **2026-03-26**: 
+    *   新增`FlowerSplitSentences` 將對應的分行符號替換成帶有換行符號的格式，並過濾掉行首行尾的空白與空行。
+    *   主要是針對AI語音，QwenTTS若單一句(未換行)過長會導致語速變快。同樣文章，單一句長度過長會影響AI無法表達確切的情緒。
 *   **2026-02-24**: 
     *   新增 `FlowerRemoveCommentedText` 節點。
     *   `FlowerMultilinePromptSelector` 重大更新：新增「組合模式 (Combination)」、支援絕對/相對目錄輸入、修正中文排序邏輯一致性、修復 F5 重新整理後內容消失的問題。

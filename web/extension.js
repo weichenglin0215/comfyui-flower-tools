@@ -486,6 +486,71 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             }
         };
     };
+    const setupSplitSentences = (nodeType, nodeName) => {
+        if (nodeType.__flower_split_setup_done) return;
+        nodeType.__flower_split_setup_done = true;
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            const mainText = this.widgets.find(w => w.name === "text");
+
+            if (ComfyWidgets && ComfyWidgets["STRING"]) {
+                if (!this.widgets.find(w => w.name === "result_dialog")) {
+                    const res = ComfyWidgets["STRING"](this, "result_dialog", ["STRING", { multiline: true }], app).widget;
+                    res.label = "Output Preview (輸出預覽)";
+                    res.value = "";
+                    res.serialize = false;
+
+                    if (res.inputEl) {
+                        res.inputEl.readOnly = true;
+                        res.inputEl.style.opacity = "0.7";
+                    }
+
+                    res.computeSize = (w) => [220, 60];
+                    this.resultWidget = res;
+                }
+            }
+
+            const adjustHeights = () => {
+                let fixedHeight = 40; 
+                for (const w of this.widgets) {
+                    if (w !== mainText) {
+                        fixedHeight += (w.computeSize ? w.computeSize(this.size[0])[1] : 24) + 4;
+                    }
+                }
+
+                const remaining = Math.max(60, this.size[1] - fixedHeight - 10);
+                if (mainText) {
+                    mainText.computeSize = (w) => [220, remaining];
+                    mainText._last_h = remaining;
+                }
+            };
+
+            const oldOnResize = this.onResize;
+            this.onResize = function (size) {
+                adjustHeights();
+                return oldOnResize ? oldOnResize.apply(this, arguments) : undefined;
+            };
+
+            this.size = [400, 250];
+            setTimeout(adjustHeights, 100);
+        };
+
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+            if (message.text) {
+                const res = this.widgets.find(w => w.name === "result_dialog");
+                if (res) {
+                    res.value = message.text[0];
+                    if (res.inputEl) res.inputEl.value = res.value;
+                    this.setDirtyCanvas(true);
+                }
+            }
+        };
+    };
 
     app.registerExtension({
         name: "Flower.MultilinePromptSelector.V31",
@@ -498,6 +563,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupStringComparison(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerTCSCConverter") {
                 setupTCSCConverter(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerSplitSentences") {
+                setupSplitSentences(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;
