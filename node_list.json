@@ -1,0 +1,13 @@
+{
+    "version": "1.6.1",
+    "nodes": [
+        "FlowerMultilinePromptSelector",
+        "FlowerKeywordReplacer",
+        "FlowerListOfStrings",
+        "FlowerFileNameCombination",
+        "FlowerTCSCConverter",
+        "FlowerStringComparison",
+        "FlowerRemoveCommentedText",
+        "FlowerSplitSentences"
+    ]
+}
