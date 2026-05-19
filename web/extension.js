@@ -486,6 +486,69 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             }
         };
     };
+    const setupLoadTextFromFolder = (nodeType, nodeName) => {
+        if (nodeType.__flower_ltff_setup_done) return;
+        nodeType.__flower_ltff_setup_done = true;
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            if (!ComfyWidgets || !ComfyWidgets["STRING"]) return;
+
+            // 6. 檔案內容預覽欄（唯讀）
+            if (!this.widgets.find(w => w.name === "content_preview")) {
+                const cp = ComfyWidgets["STRING"](this, "content_preview", ["STRING", { multiline: true }], app).widget;
+                cp.label = "檔案內容 (Content Preview)";
+                cp.value = "";
+                cp.serialize = false;
+                if (cp.inputEl) {
+                    cp.inputEl.readOnly = true;
+                    cp.inputEl.style.opacity = "0.7";
+                }
+                cp.computeSize = (w) => [220, 150];
+                this.contentPreviewWidget = cp;
+            }
+
+            // 7. 檔案清單顯示欄（唯讀，顯示 0- 開頭的編號清單）
+            if (!this.widgets.find(w => w.name === "file_list_display")) {
+                const fl = ComfyWidgets["STRING"](this, "file_list_display", ["STRING", { multiline: true }], app).widget;
+                fl.label = "檔案清單 (File List)";
+                fl.value = "";
+                fl.serialize = false;
+                if (fl.inputEl) {
+                    fl.inputEl.readOnly = true;
+                    fl.inputEl.style.opacity = "0.7";
+                }
+                fl.computeSize = (w) => [220, 120];
+                this.fileListWidget = fl;
+            }
+
+            this.size = [500, 450];
+        };
+
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+
+            if (message.text) {
+                const cp = this.widgets.find(w => w.name === "content_preview");
+                if (cp) {
+                    cp.value = message.text[0];
+                    if (cp.inputEl) cp.inputEl.value = cp.value;
+                }
+            }
+            if (message.file_list) {
+                const fl = this.widgets.find(w => w.name === "file_list_display");
+                if (fl) {
+                    fl.value = message.file_list[0];
+                    if (fl.inputEl) fl.inputEl.value = fl.value;
+                }
+            }
+            this.setDirtyCanvas(true);
+        };
+    };
+
     const setupSplitSentences = (nodeType, nodeName) => {
         if (nodeType.__flower_split_setup_done) return;
         nodeType.__flower_split_setup_done = true;
@@ -565,6 +628,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupTCSCConverter(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerSplitSentences") {
                 setupSplitSentences(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerLoadTextFromFolder") {
+                setupLoadTextFromFolder(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;

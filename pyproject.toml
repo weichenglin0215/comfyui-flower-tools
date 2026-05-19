@@ -1,7 +1,7 @@
 [project]
 name = "flower-tools"
 description = "powerful wildcards prompt editing, combining, replacing, splitting, and deleting functions, custom file name management, and a Traditional/Simplified Chinese conversion tool in ComfyUI."
-version = "1.1.0"
+version = "1.2.0"
 license = "MIT" 
 # classifiers = [
 #     # For OS-independent nodes (works on all operating systems)
