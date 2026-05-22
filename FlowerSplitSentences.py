@@ -4,7 +4,7 @@ class FlowerSplitSentences:
         return {
             "required": {
                 "text": ("STRING", {"multiline": True, "default": ""}),
-                "split_symbols": ("STRING", {"default": ",.?!，。？！"}),
+                "split_symbols": ("STRING", {"default": ",.?!;:，。？！；："}), 
             }
         }
     

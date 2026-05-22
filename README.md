@@ -186,6 +186,26 @@
 
 ---
 
+### 9. 🌸 Flower Load Text From Folder (資料夾載入文字)
+
+從指定資料夾中依序讀取所有文字檔，並輸出為一個連續的長字串。適用於將多個提示詞檔案合併為單一長文本輸入。
+
+**功能特色：**
+*   **自動讀取**: 自動列出指定目錄下的所有 `.txt` 檔案。
+*   **自訂分段**: 可設定每個檔案最大讀取字數（`max_chars`），控制輸入長度。
+*   **依序輸出**: 依檔案順序串接內容，自動加入檔案間的分隔符（`separator`）。
+*   **效能優化**: 輸出為單一長字串，避免 ComfyUI 執行階段因過多字串而佔用大量記憶體。
+*   **檔案重命名**: 可選擇是否在輸出內容前加上檔案名稱作為標題（`include_filename`），並自訂標題格式。
+
+![FlowerLoadTextFromFolder_demo](images/FlowerLoadTextFromFolder_demo.png)
+
+**進階應用（解決 QwenTTS 記憶體問題）**：
+
+本節點專為解決 `QwenTTS` 讀取超長文本導致崩潰（Out of Memory）的問題而設計。您可以將長篇劇本或小說分割成多個小檔案（每檔案不超過 1000 字），配合本節點的 `max_chars` 設定，分段依序輸入，讓 AI 逐段生成語音，有效控制記憶體使用量。
+
+---
+
+
 ## 📂 目錄結構 (Directory Structure)
 
 您的 Wildcards (提示詞檔案) 預設應放在本插件目錄下的 `wildcards` 資料夾中：
@@ -206,7 +226,20 @@ ComfyUI/
 您也可以在 Prompt Selector 節點的 `directory` 欄位輸入絕對路徑來讀取其他位置的檔案。
 
 ## 📜 更新日誌 (Changelog)
-
+*   **2026-05-22 (v1.8.0)**:
+    *   優化`🌸Flower Load Text From Folder`節點，從目錄中依序載入文字檔，可分段依序輸出解決QwenTTS載入過長文本而導致Out of memory的問題。
+    *   `🌸Flower Load Text From Folder`:
+        *   原本的 JS 實作會與 ComfyUI 的自動撐大高度機制（`onResize` → `computeSize` 迴圈）打架，導致在濃縮或展開時，節點尺寸會被強行拉回固定值，無法保持使用者調整後的狀態。
+        *   修改為**純後端實作**：`onExecuted` 負責把完整的檔案內容寫回 Python 的原生 widget（回填 `text` 屬性），完全不修改 `computeSize` 或攔截 `onResize`。
+        *   **效果**：高度由 ComfyUI 原生系統全權控制，拖曳時自然伸縮，不會再被強行拉回，也不會再因 `onResize` 觸發無限迴圈。
+    *   `🌸Flower String Comparison`：
+        *   將原本分散在 `onNodeCreated` 與 `onExecuted` 中的檢查／修正邏輯，統一移到 `onExecuted` 的統一入口。
+        *   **效果**：在重新執行時才檢查環境，不影響執行期，避免不必要的延遲或操作干擾。
+    *   `🌸Flower Split Sentences`：
+        *   將原本分散在 `onNodeCreated` 與 `onExecuted` 中的檢查／修正邏輯，統一移到 `onExecuted` 的統一入口。
+        *   **效果**：在重新執行時才檢查環境，不影響執行期，避免不必要的延遲或操作干擾。
+*   **2026-05-19 (v1.7.0)**:
+    *   新增`🌸Flower Load Text From Folder`節點，從目錄中依序載入文字檔。
 *   **2026-04-10 (v1.1.0)**: 
     *   根據ComfyUI官方發布的Node發布規範，更新pyproject.toml檔案。
     *   將原本放在GitHub上的Node發布到ComfyUI官方的Node市場。

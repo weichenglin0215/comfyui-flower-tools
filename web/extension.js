@@ -305,53 +305,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         nodeType.prototype.onNodeCreated = function () {
             if (onNodeCreated) onNodeCreated.apply(this, arguments);
 
-            const textA = this.widgets.find(w => w.name === "字串A");
-            const textB = this.widgets.find(w => w.name === "字串B");
-
-            // Define minimum heights (approx 2 lines = 50px)
-            const minWHeight = 60;
-
-            this.computeSize = function () {
-                let h = 30; // Title
-                for (const w of this.widgets) {
-                    if (w === textA || w === textB) {
-                        h += (w._last_h || minWHeight) + 4;
-                    } else {
-                        h += (w.computeSize ? w.computeSize(this.size[0])[1] : 24) + 4;
-                    }
-                }
-                return [220, Math.max(h, 250)];
-            };
-
-            const adjustHeights = () => {
-                let fixedHeight = 40; // Title + margins
-                for (const w of this.widgets) {
-                    if (w !== textA && w !== textB) {
-                        fixedHeight += (w.computeSize ? w.computeSize(this.size[0])[1] : 24) + 4;
-                    }
-                }
-
-                const remaining = Math.max(minWHeight * 2, this.size[1] - fixedHeight - 10);
-                const half = remaining / 2;
-
-                if (textA) {
-                    textA.computeSize = (w) => [220, half];
-                    textA._last_h = half;
-                }
-                if (textB) {
-                    textB.computeSize = (w) => [220, half];
-                    textB._last_h = half;
-                }
-            };
-
-            const oldOnResize = this.onResize;
-            this.onResize = function (size) {
-                adjustHeights();
-                return oldOnResize ? oldOnResize.apply(this, arguments) : undefined;
-            };
-
+            // 字串A、字串B 均為 Python 原生 widget，完全交給 ComfyUI 原生系統管理高度，
+            // 不自訂 computeSize / onResize，避免觸發 LiteGraph 的自動增高迴圈。
             this.size = [400, 350];
-            setTimeout(adjustHeights, 100);
         };
     };
 
@@ -496,7 +452,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
             if (!ComfyWidgets || !ComfyWidgets["STRING"]) return;
 
-            // 6. 檔案內容預覽欄（唯讀）
+            // 檔案內容預覽欄（唯讀）
             if (!this.widgets.find(w => w.name === "content_preview")) {
                 const cp = ComfyWidgets["STRING"](this, "content_preview", ["STRING", { multiline: true }], app).widget;
                 cp.label = "檔案內容 (Content Preview)";
@@ -506,11 +462,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     cp.inputEl.readOnly = true;
                     cp.inputEl.style.opacity = "0.7";
                 }
-                cp.computeSize = (w) => [220, 150];
-                this.contentPreviewWidget = cp;
             }
 
-            // 7. 檔案清單顯示欄（唯讀，顯示 0- 開頭的編號清單）
+            // 檔案清單顯示欄（唯讀）
             if (!this.widgets.find(w => w.name === "file_list_display")) {
                 const fl = ComfyWidgets["STRING"](this, "file_list_display", ["STRING", { multiline: true }], app).widget;
                 fl.label = "檔案清單 (File List)";
@@ -520,11 +474,17 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     fl.inputEl.readOnly = true;
                     fl.inputEl.style.opacity = "0.7";
                 }
-                fl.computeSize = (w) => [220, 120];
-                this.fileListWidget = fl;
             }
 
+            // 不自訂 computeSize 也不攔截 onResize——完全交給 ComfyUI 原生系統管理，
+            // 就像 setupTCSCConverter 一樣，拖曳時節點高度自然伸縮，不會產生迴圈。
             this.size = [500, 450];
+        };
+
+        // 從已儲存的工作流程載入後回填顯示值（由 onExecuted 在重新執行時更新，無需額外處理）
+        const onConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function (config) {
+            if (onConfigure) onConfigure.apply(this, arguments);
         };
 
         const onExecuted = nodeType.prototype.onExecuted;
@@ -557,48 +517,24 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         nodeType.prototype.onNodeCreated = function () {
             if (onNodeCreated) onNodeCreated.apply(this, arguments);
 
-            const mainText = this.widgets.find(w => w.name === "text");
-
+            // text 為 Python 原生 widget，不干預其高度。
+            // result_dialog 為唯讀預覽，不設 computeSize，完全交給 ComfyUI 原生系統管理。
             if (ComfyWidgets && ComfyWidgets["STRING"]) {
                 if (!this.widgets.find(w => w.name === "result_dialog")) {
                     const res = ComfyWidgets["STRING"](this, "result_dialog", ["STRING", { multiline: true }], app).widget;
                     res.label = "Output Preview (輸出預覽)";
                     res.value = "";
                     res.serialize = false;
-
                     if (res.inputEl) {
                         res.inputEl.readOnly = true;
                         res.inputEl.style.opacity = "0.7";
                     }
-
-                    res.computeSize = (w) => [220, 60];
+                    // ⚠️ 不設 computeSize，不攔截 onResize——完全交給 ComfyUI 原生系統管理
                     this.resultWidget = res;
                 }
             }
 
-            const adjustHeights = () => {
-                let fixedHeight = 40; 
-                for (const w of this.widgets) {
-                    if (w !== mainText) {
-                        fixedHeight += (w.computeSize ? w.computeSize(this.size[0])[1] : 24) + 4;
-                    }
-                }
-
-                const remaining = Math.max(60, this.size[1] - fixedHeight - 10);
-                if (mainText) {
-                    mainText.computeSize = (w) => [220, remaining];
-                    mainText._last_h = remaining;
-                }
-            };
-
-            const oldOnResize = this.onResize;
-            this.onResize = function (size) {
-                adjustHeights();
-                return oldOnResize ? oldOnResize.apply(this, arguments) : undefined;
-            };
-
             this.size = [400, 250];
-            setTimeout(adjustHeights, 100);
         };
 
         const onExecuted = nodeType.prototype.onExecuted;
