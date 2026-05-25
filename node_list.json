@@ -1,5 +1,5 @@
 {
-    "version": "1.7.0",
+    "version": "1.8.0",
     "nodes": [
         "FlowerMultilinePromptSelector",
         "FlowerKeywordReplacer",
@@ -9,6 +9,7 @@
         "FlowerStringComparison",
         "FlowerRemoveCommentedText",
         "FlowerSplitSentences",
-        "FlowerLoadTextFromFolder"
+        "FlowerLoadTextFromFolder",
+        "FlowerAudioMerge"
     ]
 }

@@ -509,6 +509,248 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         };
     };
 
+    const setupAudioMerge = (nodeType, nodeName) => {
+        // 防重複初始化
+        if (nodeType.__flower_am_setup_done) return;
+        nodeType.__flower_am_setup_done = true;
+
+        // ── 重新建立音檔勾選按鈕清單 ────────────────────────────────────────────
+        // 移除舊的音檔按鈕，依新的 files 陣列重新產生，並同步 audioConfigs / fileConfigs widget
+        const rebuildAudioButtons = (node, files) => {
+            if (!node.widgets) return;
+
+            // 移除所有標記為音檔按鈕的 widget（保留基礎 widget）
+            for (let i = node.widgets.length - 1; i >= 0; i--) {
+                const w = node.widgets[i];
+                if (w._is_audio_file_btn) {
+                    if (w.inputEl) w.inputEl.remove();
+                    node.widgets.splice(i, 1);
+                }
+            }
+
+            // 固定字母排序，與 Python 後端保持一致，避免清單順序混亂
+            const sortedFiles = [...files].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+            // 同步 audioConfigs：保留既有勾選狀態，移除不在目錄的舊項目
+            const newConfigs = {};
+            for (const f of sortedFiles) {
+                newConfigs[f] = node.audioConfigs?.[f] || { enabled: false };
+            }
+            node.audioConfigs = newConfigs;
+
+            // 寫回 fileConfigs widget（供工作流程儲存時保存勾選狀態）
+            const cfw = node.widgets.find(w => w.name === "fileConfigs");
+            if (cfw) cfw.value = JSON.stringify(node.audioConfigs, null, 2);
+
+            // 依排序後的清單加入音檔切換按鈕
+            for (const filename of sortedFiles) {
+                const btn = node.addWidget("button", filename, null, () => {
+                    // 切換該檔案的勾選狀態
+                    if (!node.audioConfigs) node.audioConfigs = {};
+                    const prev = node.audioConfigs[filename]?.enabled || false;
+                    node.audioConfigs[filename] = { enabled: !prev };
+
+                    // 更新 fileConfigs widget
+                    const cfw = node.widgets.find(w => w.name === "fileConfigs");
+                    if (cfw) cfw.value = JSON.stringify(node.audioConfigs, null, 2);
+
+                    // 同步 result_dialog 顯示最新已選清單
+                    _syncResultDialog(node);
+                    node.setDirtyCanvas(true);
+                });
+                btn._is_audio_file_btn = true;
+                btn.serialize = false;
+                // 固定每個按鈕高度（35px 橫條 + 5px 間距）
+                btn.computeSize = () => [220, 40];
+
+                // 自訂繪製：左側 ON/OFF 狀態標籤 + 右側檔名
+                btn.draw = function (ctx, node, width, y, height) {
+                    const enabled = node.audioConfigs?.[this.name]?.enabled || false;
+
+                    // 背景橫條
+                    ctx.fillStyle = "#121212";
+                    ctx.beginPath();
+                    ctx.roundRect(20, y, width - 40, 35, 6);
+                    ctx.fill();
+                    ctx.strokeStyle = enabled ? "#27ae60" : "#444";
+                    ctx.lineWidth = enabled ? 2 : 1;
+                    ctx.stroke();
+
+                    // ON / OFF 狀態標籤（左側）
+                    ctx.fillStyle = enabled ? "#27ae60" : "#555";
+                    ctx.beginPath();
+                    ctx.roundRect(25, y + 3, 65, 29, 4);
+                    ctx.fill();
+                    ctx.fillStyle = "#fff";
+                    ctx.font = "bold 14px Arial";
+                    ctx.textAlign = "center";
+                    ctx.fillText(enabled ? "✓ ON" : "OFF", 57, y + 22);
+
+                    // 檔名（過長時截斷並加省略號）
+                    ctx.textAlign = "left";
+                    ctx.font = "16px Arial";
+                    ctx.fillStyle = enabled ? "#ddd" : "#777";
+                    let displayName = this.name;
+                    const maxW = width - 130;
+                    while (ctx.measureText(displayName).width > maxW && displayName.length > 4) {
+                        displayName = displayName.slice(0, -4) + "...";
+                    }
+                    ctx.fillText(displayName, 100, y + 22);
+                };
+            }
+
+            // 重新整理後同步 result_dialog
+            _syncResultDialog(node);
+            node.setDirtyCanvas(true);
+        };
+
+        // ── 同步 result_dialog：即時顯示已勾選的音檔清單 ───────────────────────
+        const _syncResultDialog = (node) => {
+            const enabled = Object.entries(node.audioConfigs || {})
+                .filter(([_, cfg]) => cfg.enabled)
+                .map(([f]) => f)
+                .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+            const res = node.widgets.find(w => w.name === "result_dialog");
+            if (res) {
+                res.value = enabled.join("\n");
+                if (res.inputEl) res.inputEl.value = res.value;
+            }
+        };
+
+        // ── onNodeCreated：建立 JS 動態 widget ──────────────────────────────────
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            // 初始化音檔設定快取（用於在 JS 端存儲各檔案的勾選狀態）
+            this.audioConfigs = {};
+
+            // 標記 Python 定義的基礎 widget，防止被 rebuildAudioButtons 誤刪
+            if (this.widgets) {
+                for (const w of this.widgets) {
+                    w._is_base_widget = true;
+                }
+            }
+
+            // 建立唯讀結果預覽欄（顯示已勾選音檔清單，執行後由 onExecuted 更新）
+            // 不設 computeSize，完全交給 ComfyUI 原生高度系統（防止自動增高迴圈）
+            if (ComfyWidgets && ComfyWidgets["STRING"]) {
+                if (!this.widgets.find(w => w.name === "result_dialog")) {
+                    const res = ComfyWidgets["STRING"](this, "result_dialog",
+                        ["STRING", { multiline: true }], app).widget;
+                    res.label = "已選音檔 (Selected Files)";
+                    res.value = "";
+                    res.serialize = false;
+                    res._is_base_widget = true;
+                    if (res.inputEl) {
+                        res.inputEl.readOnly = true;
+                        res.inputEl.style.opacity = "0.7";
+                    }
+                }
+            }
+
+            // 建立 Refresh 按鈕：呼叫 API 重新整理音檔清單
+            if (!this.widgets.find(w => w.name === "refresh_btn")) {
+                const rfBtn = this.addWidget("button", "🔄 Refresh Files (重新整理音檔清單)", null, async () => {
+                    // 先從 fileConfigs widget 讀回最新 JSON，確保勾選狀態不因 refresh 而遺失
+                    const cfw = this.widgets.find(w => w.name === "fileConfigs");
+                    if (cfw?.value) {
+                        try { this.audioConfigs = JSON.parse(cfw.value); } catch (e) { }
+                    }
+
+                    const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
+                    const fmt = this.widgets.find(w => w.name === "inputFormatSelector")?.value || "ALL";
+                    const kw  = (this.widgets.find(w => w.name === "filterKeyword")?.value || "").trim();
+
+                    try {
+                        const resp = await api.fetchApi(
+                            `/flower-tools/list-audio-files` +
+                            `?directory=${encodeURIComponent(dir)}` +
+                            `&format=${encodeURIComponent(fmt)}` +
+                            `&keyword=${encodeURIComponent(kw)}`
+                        );
+                        if (!resp.ok) {
+                            window.alert(`目錄不存在或無法存取：\n${dir}`);
+                            return;
+                        }
+                        const data = await resp.json();
+                        rebuildAudioButtons(this, data.files || []);
+                    } catch (e) {
+                        console.error("[FlowerAudioMerge] Refresh 失敗：", e);
+                    }
+                });
+                rfBtn.name = "refresh_btn";
+                rfBtn.serialize = false;
+                rfBtn._is_base_widget = true;
+            }
+
+            // 建立 torchaudio 安裝按鈕（首次使用若環境未安裝可一鍵處理）
+            if (!this.widgets.find(w => w.name === "install_torchaudio_btn")) {
+                const ibtn = this.addWidget("button", "⚙️ 安裝 torchaudio (Install torchaudio)", null, async () => {
+                    try {
+                        const checkResp = await api.fetchApi("/flower-tools/check-torchaudio");
+                        const checkData = await checkResp.json();
+                        if (checkData.installed) {
+                            window.alert(`✅ torchaudio 已安裝（v${checkData.version}）\ntorchaudio is already installed.`);
+                            return;
+                        }
+                        const confirmed = window.confirm(
+                            "⚠️ 未偵測到 torchaudio，是否立即安裝？\n\n" +
+                            "torchaudio not found. Install now?\n" +
+                            "安裝期間請查看 ComfyUI 後台輸出視窗以確認進度。"
+                        );
+                        if (!confirmed) return;
+                        const resp = await api.fetchApi("/flower-tools/install-torchaudio", { method: "POST" });
+                        const data = await resp.json();
+                        if (data.success) {
+                            window.alert("✅ 安裝成功！請重新啟動 ComfyUI。\nInstall successful! Please restart ComfyUI.");
+                        } else {
+                            window.alert("❌ 安裝失敗，請查看 ComfyUI 後台輸出視窗。\n\n" + data.log.slice(0, 600));
+                        }
+                    } catch (e) {
+                        window.alert("Error: " + e);
+                    }
+                });
+                ibtn.name = "install_torchaudio_btn";
+                ibtn.serialize = false;
+                ibtn._is_base_widget = true;
+            }
+
+            // 設定初始節點尺寸
+            this.size = [600, 400];
+        };
+
+        // ── onConfigure：從已儲存工作流程還原音檔按鈕與勾選狀態 ─────────────────
+        const onConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function (config) {
+            if (onConfigure) onConfigure.apply(this, arguments);
+            const cfw = this.widgets.find(w => w.name === "fileConfigs");
+            if (cfw?.value) {
+                try {
+                    this.audioConfigs = JSON.parse(cfw.value);
+                    // 以 audioConfigs 的 key 作為檔案清單，重建按鈕並還原勾選狀態
+                    rebuildAudioButtons(this, Object.keys(this.audioConfigs));
+                } catch (e) {
+                    console.warn("[FlowerAudioMerge] 無法解析 fileConfigs：", e);
+                }
+            }
+        };
+
+        // ── onExecuted：執行後更新 result_dialog 顯示實際合併的音檔清單 ─────────
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+            if (message.text) {
+                const res = this.widgets.find(w => w.name === "result_dialog");
+                if (res) {
+                    res.value = message.text[0];
+                    if (res.inputEl) res.inputEl.value = res.value;
+                }
+            }
+            this.setDirtyCanvas(true);
+        };
+    };
+
     const setupSplitSentences = (nodeType, nodeName) => {
         if (nodeType.__flower_split_setup_done) return;
         nodeType.__flower_split_setup_done = true;
@@ -566,6 +808,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupSplitSentences(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerLoadTextFromFolder") {
                 setupLoadTextFromFolder(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerAudioMerge") {
+                setupAudioMerge(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;

@@ -192,6 +192,7 @@
 
 **功能特色：**
 *   **自動讀取**: 自動列出指定目錄下的所有 `.txt` 檔案。
+*   **篩選關鍵字**: 可設定篩選關鍵字，只讀取包含關鍵字的檔案。
 *   **自訂分段**: 可設定每個檔案最大讀取字數（`max_chars`），控制輸入長度。
 *   **依序輸出**: 依檔案順序串接內容，自動加入檔案間的分隔符（`separator`）。
 *   **效能優化**: 輸出為單一長字串，避免 ComfyUI 執行階段因過多字串而佔用大量記憶體。
@@ -202,6 +203,50 @@
 **進階應用（解決 QwenTTS 記憶體問題）**：
 
 本節點專為解決 `QwenTTS` 讀取超長文本導致崩潰（Out of Memory）的問題而設計。您可以將長篇劇本或小說分割成多個小檔案（每檔案不超過 1000 字），配合本節點的 `max_chars` 設定，分段依序輸入，讓 AI 逐段生成語音，有效控制記憶體使用量。
+
+---
+
+### 10. 🌸 Flower Audio Merge (音檔合併器)
+
+從指定目錄中讀取音訊檔案，讓使用者透過視覺化清單勾選目標音檔，並將其串接為單一音訊輸出。
+
+**功能特色：**
+*   **視覺化勾選介面**: 點擊 Refresh 後，目錄中的音檔會以 ON/OFF 切換按鈕呈現，點擊即可勾選或取消。
+*   **格式篩選**: 支援 WAV、MP3、FLAC 個別篩選，或使用 ALL 全選三種格式。
+*   **關鍵字篩選**: 可輸入關鍵字，只顯示檔名包含關鍵字的音檔。
+*   **固定字母排序**: 清單與合併順序均以字母排序固定，確保結果可重現。
+*   **統一格式轉換**: 所有音檔自動重新取樣至 **48000 Hz 立體聲 (float32)**，確保無縫串接。
+*   **工作流程持久化**: 勾選狀態儲存於 `fileConfigs` JSON 欄位，重新載入工作流程時自動還原清單與勾選結果。
+*   **自動安裝**: 若 `torchaudio` 未安裝，可透過內建的安裝按鈕一鍵完成。
+*   **彈性輸出**: 輸出標準 ComfyUI AUDIO tensor，可同時連接 WAV 與 MP3 兩個 Save Audio 節點。
+
+**輸入：**
+| 欄位 | 說明 |
+|------|------|
+| `directory` | 音檔目錄絕對路徑 |
+| `filterKeyword` | 檔名篩選關鍵字（空白 = 全選） |
+| `inputFormatSelector` | 輸入格式：ALL / WAV / MP3 / FLAC |
+| `appendOutputName` | 附加在 `fileName` 輸出後的字串，預設 `_Merge` |
+| `fileConfigs` | JSON 勾選狀態（由節點自動維護，無需手動編輯） |
+
+**輸出：**
+| 名稱 | 型別 | 說明 |
+|------|------|------|
+| `audio` | AUDIO | 合併後的音訊 tensor（48kHz / 立體聲 / float32） |
+| `count` | INT | 成功合併的音檔數量 |
+| `length` | FLOAT | 總時長（秒，小數點以下兩位） |
+| `fileName` | STRING | 第一個勾選音檔的檔名（不含路徑與副檔名）+ `appendOutputName` |
+
+**建議工作流程：**
+
+```
+FlowerAudioMerge
+    ├── audio ──→ Save Audio (WAV, 32-bit float)
+    ├── audio ──→ Save Audio (MP3, 320k)
+    └── fileName ──→ FlowerFileNameCombination（用作存檔路徑的檔名段）
+```
+
+> **注意**：MP3 格式需要系統安裝 `ffmpeg`。ComfyUI Windows Portable 版通常已內含 ffmpeg，一般無需額外安裝。
 
 ---
 
@@ -226,18 +271,20 @@ ComfyUI/
 您也可以在 Prompt Selector 節點的 `directory` 欄位輸入絕對路徑來讀取其他位置的檔案。
 
 ## 📜 更新日誌 (Changelog)
-*   **2026-05-22 (v1.8.0)**:
-    *   優化`🌸Flower Load Text From Folder`節點，從目錄中依序載入文字檔，可分段依序輸出解決QwenTTS載入過長文本而導致Out of memory的問題。
-    *   `🌸Flower Load Text From Folder`:
-        *   原本的 JS 實作會與 ComfyUI 的自動撐大高度機制（`onResize` → `computeSize` 迴圈）打架，導致在濃縮或展開時，節點尺寸會被強行拉回固定值，無法保持使用者調整後的狀態。
-        *   修改為**純後端實作**：`onExecuted` 負責把完整的檔案內容寫回 Python 的原生 widget（回填 `text` 屬性），完全不修改 `computeSize` 或攔截 `onResize`。
-        *   **效果**：高度由 ComfyUI 原生系統全權控制，拖曳時自然伸縮，不會再被強行拉回，也不會再因 `onResize` 觸發無限迴圈。
-    *   `🌸Flower String Comparison`：
-        *   將原本分散在 `onNodeCreated` 與 `onExecuted` 中的檢查／修正邏輯，統一移到 `onExecuted` 的統一入口。
-        *   **效果**：在重新執行時才檢查環境，不影響執行期，避免不必要的延遲或操作干擾。
-    *   `🌸Flower Split Sentences`：
-        *   將原本分散在 `onNodeCreated` 與 `onExecuted` 中的檢查／修正邏輯，統一移到 `onExecuted` 的統一入口。
-        *   **效果**：在重新執行時才檢查環境，不影響執行期，避免不必要的延遲或操作干擾。
+*   **2026-05-25 (v1.8.0)**:
+    *   新增 `🌸Flower Audio Merge` 節點，將目錄中的多個音訊檔案串接為單一輸出。
+        *   支援 WAV、MP3、FLAC 三種輸入格式（MP3 需系統已安裝 ffmpeg）。
+        *   視覺化 ON/OFF 切換按鈕介面，勾選狀態可隨工作流程儲存與還原。
+        *   所有音檔統一轉換為 48000 Hz 立體聲 float32，確保無縫串接。
+        *   輸出標準 AUDIO tensor，可同時連接多個 Save Audio 節點（如 WAV + MP3 同時存檔）。
+        *   額外輸出 `fileName`（第一個勾選音檔名 + `appendOutputName`），便於串接 FlowerFileNameCombination 設定存檔路徑。
+        *   內建 torchaudio 一鍵安裝按鈕。
+*   **2026-05-22 (v1.7.1)**:
+    *   優化`🌸Flower Load Text From Folder`節點，修正 JS 高度計算與 ComfyUI `onResize` 機制衝突的問題。
+        *   原本的 JS 實作會與 ComfyUI 的自動撐大高度機制（`onResize` → `computeSize` 迴圈）打架，導致節點尺寸被強行拉回固定值。
+        *   修改為**完全不干預高度**：移除所有自訂 `computeSize` 與 `onResize` 攔截，由 ComfyUI 原生系統全權控制節點高度。
+    *   `🌸Flower String Comparison`：統一整理 `onNodeCreated` 與 `onExecuted` 中的邏輯，避免不必要的執行期干擾。
+    *   `🌸Flower Split Sentences`：同上，邏輯統一整理。
 *   **2026-05-19 (v1.7.0)**:
     *   新增`🌸Flower Load Text From Folder`節點，從目錄中依序載入文字檔。
 *   **2026-04-10 (v1.1.0)**: 
