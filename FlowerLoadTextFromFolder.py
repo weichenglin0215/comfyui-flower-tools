@@ -2,6 +2,31 @@
 import os
 import re
 
+from server import PromptServer
+from aiohttp import web
+
+
+def _match_keyword_pattern(name: str, pattern: str) -> bool:
+    """
+    關鍵字模式比對，支援多關鍵字運算：
+      '|' 為 OR 分隔（先切割，任一群組符合即為 True）
+      '&' 為 AND 分隔（群組內所有關鍵字都必須符合）
+      範例：'A&B|C' → (A AND B) OR C
+      空白模式回傳 True（不篩選）
+    """
+    pattern = pattern.strip()
+    if not pattern:
+        return True
+    name_lower = name.lower()
+    for group in pattern.split('|'):
+        group = group.strip()
+        if not group:
+            continue
+        and_keywords = [kw.strip().lower() for kw in group.split('&') if kw.strip()]
+        if all(kw in name_lower for kw in and_keywords):
+            return True
+    return False
+
 
 def _get_sort_key(sort_mode):
     """根據排序模式回傳對應的排序函數。"""
@@ -87,18 +112,21 @@ class FlowerLoadTextFromFolder:
                 "directory": ("STRING", {"default": ""}),
                 # 2. 篩選關鍵字（空白＝全選）
                 "filter_keyword": ("STRING", {"default": ""}),
-                # 3. seed：指定選取第幾個檔案或分段
+                # 3. 排除關鍵字：從 filter_keyword 篩選結果中進一步排除符合的檔案
+                #    支援 '&'（AND）與 '|'（OR）分隔多關鍵字
+                "negativeKeyword": ("STRING", {"default": ""}),
+                # 4. seed：指定選取第幾個檔案或分段
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                # 4. 生成後控制，與 seed 綁定
+                # 5. 生成後控制，與 seed 綁定
                 "continuous_processing": ("INT", {"default": 1, "min": 1, "max": 9999999}),
-                # 5. 排序方式
+                # 6. 排序方式
                 "sort_mode": (["字母排序(Alphabetical)", "自然排序(Natural)"],),
             },
             "optional": {
-                # 6. 分段字數上限（-1 = 不分段；≥256 = 啟用分段）
+                # 7. 分段字數上限（-1 = 不分段；≥256 = 啟用分段）
                 #    optional 確保舊工作流程載入時不會因缺少此欄位而報錯
                 "max_chars_per_segment": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
-                # 7. 分段符號，回推時以此符號集為合法切斷點
+                # 8. 分段符號，回推時以此符號集為合法切斷點
                 "split_symbols": ("STRING", {"default": ",.?!;:，。？！；："}),
             },
         }
@@ -110,7 +138,8 @@ class FlowerLoadTextFromFolder:
     OUTPUT_NODE = True
 
     def load_text_from_folder(self, directory, filter_keyword, seed, continuous_processing,
-                               sort_mode, max_chars_per_segment=-1, split_symbols=",.?!;:，。？！；："):
+                               sort_mode, max_chars_per_segment=-1, split_symbols=",.?!;:，。？！；：",
+                               negativeKeyword=""):
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -124,10 +153,13 @@ class FlowerLoadTextFromFolder:
         except Exception as e:
             return {"ui": {"text": [str(e)], "file_list": [""]}, "result": (str(e), "", "", "")}
 
-        # 以關鍵字篩選檔名
-        keyword = filter_keyword.strip()
-        if keyword:
-            all_files = [f for f in all_files if keyword in f]
+        # 套用篩選關鍵字（支援 '&' AND、'|' OR 多關鍵字模式）
+        if filter_keyword.strip():
+            all_files = [f for f in all_files if _match_keyword_pattern(f, filter_keyword)]
+
+        # 套用排除關鍵字（從篩選結果中進一步排除）
+        if negativeKeyword.strip():
+            all_files = [f for f in all_files if not _match_keyword_pattern(f, negativeKeyword)]
 
         # 依指定方式排序
         all_files.sort(key=_get_sort_key(sort_mode))
@@ -248,6 +280,39 @@ class FlowerLoadTextFromFolder:
             "ui": {"text": [content], "file_list": [file_list_str]},
             "result": (content, virtual_full_path, virtual_filename, virtual_name_no_ext),
         }
+
+
+# ── API 端點 ──────────────────────────────────────────────────────────────────
+
+@PromptServer.instance.routes.get("/flower-tools/list-text-files")
+async def list_text_files(request):
+    """
+    列出指定目錄中符合關鍵字篩選的 .txt 文字檔清單（字母排序）。
+    供 JS 的 refresh_btn 在執行節點前即時預覽檔案清單使用。
+
+    Query params：
+      directory       - 目錄絕對路徑
+      keyword         - 篩選關鍵字（支援 & AND、| OR；空白 = 不篩選）
+      negativeKeyword - 排除關鍵字（同上語法；空白 = 不排除）
+    """
+    directory        = request.rel_url.query.get("directory", "").strip()
+    keyword          = request.rel_url.query.get("keyword", "").strip()
+    negative_keyword = request.rel_url.query.get("negativeKeyword", "").strip()
+
+    if not directory or not os.path.isdir(directory):
+        return web.json_response({"error": "目錄不存在"}, status=404)
+
+    try:
+        files = [f for f in os.listdir(directory) if f.lower().endswith(".txt")]
+        if keyword:
+            files = [f for f in files if _match_keyword_pattern(f, keyword)]
+        if negative_keyword:
+            files = [f for f in files if not _match_keyword_pattern(f, negative_keyword)]
+        files.sort(key=lambda f: f.lower())
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"files": files})
 
 
 NODE_CLASS_MAPPINGS = {"FlowerLoadTextFromFolder": FlowerLoadTextFromFolder}

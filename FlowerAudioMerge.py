@@ -35,6 +35,28 @@ except ImportError:
     _HAS_TORCHAUDIO = False
 
 
+def _match_keyword_pattern(name: str, pattern: str) -> bool:
+    """
+    關鍵字模式比對，支援多關鍵字運算：
+      '|' 為 OR 分隔（先切割，任一群組符合即為 True）
+      '&' 為 AND 分隔（群組內所有關鍵字都必須符合）
+      範例：'A&B|C' → (A AND B) OR C
+      空白模式回傳 True（不篩選）
+    """
+    pattern = pattern.strip()
+    if not pattern:
+        return True
+    name_lower = name.lower()
+    for group in pattern.split('|'):
+        group = group.strip()
+        if not group:
+            continue
+        and_keywords = [kw.strip().lower() for kw in group.split('&') if kw.strip()]
+        if all(kw in name_lower for kw in and_keywords):
+            return True
+    return False
+
+
 def _empty_audio():
     """產生空白 ComfyUI AUDIO 物件，用於錯誤情況下的安全回傳。"""
     return {"waveform": torch.zeros(1, 2, 1), "sample_rate": 48000}
@@ -57,13 +79,17 @@ class FlowerAudioMerge:
             "required": {
                 # 1. 輸入目錄絕對路徑
                 "directory": ("STRING", {"default": ""}),
-                # 2. 檔名篩選關鍵字（空白 = 不篩選）
+                # 2. 篩選關鍵字：支援 '&'（AND）與 '|'（OR）分隔多關鍵字
+                #    範例：'人物&台灣' 表示檔名需同時含有兩者；'台灣|日本' 表示含其中之一即可
                 "filterKeyword": ("STRING", {"default": ""}),
-                # 3. 輸入音檔格式篩選
+                # 3. 排除關鍵字：從 filterKeyword 篩選結果中進一步排除符合的檔案
+                #    同樣支援 '&'（AND）與 '|'（OR）分隔
+                "negativeKeyword": ("STRING", {"default": ""}),
+                # 4. 輸入音檔格式篩選
                 "inputFormatSelector": (["ALL", "WAV", "MP3", "FLAC"],),
-                # 4. 輸出檔名附加字串：附加在第一個勾選音檔的檔名（不含副檔名）之後
+                # 5. 輸出檔名附加字串：附加在第一個勾選音檔的檔名（不含副檔名）之後
                 "appendOutputName": ("STRING", {"default": "_Merge"}),
-                # 5. 音檔勾選狀態（JSON 格式，由 JS 前端自動讀寫，用於工作流程儲存與還原）
+                # 6. 音檔勾選狀態（JSON 格式，由 JS 前端自動讀寫，用於工作流程儲存與還原）
                 # 輸出格式與品質設定由下游 Save Audio 節點負責，本節點輸出格式無關的 float32 tensor
                 "fileConfigs": ("STRING", {"multiline": True, "default": "{}"}),
             },
@@ -75,7 +101,7 @@ class FlowerAudioMerge:
     CATEGORY = "flower-tools"
     OUTPUT_NODE = True
 
-    def merge_audio(self, directory, filterKeyword, inputFormatSelector,
+    def merge_audio(self, directory, filterKeyword, negativeKeyword, inputFormatSelector,
                     appendOutputName, fileConfigs):
         """
         主執行方法：載入已勾選音檔，統一重新取樣後串接，回傳 ComfyUI AUDIO 格式。
@@ -114,6 +140,12 @@ class FlowerAudioMerge:
             key=lambda f: f.lower()
         )
 
+        # 執行時同步套用 negativeKeyword：確保即使使用者未重新點擊 Refresh，
+        # negativeKeyword 的排除邏輯仍然生效
+        if negativeKeyword.strip():
+            enabled_files = [f for f in enabled_files
+                             if not _match_keyword_pattern(f, negativeKeyword)]
+
         if not enabled_files:
             msg = "尚未勾選任何音檔。請先點擊 Refresh 載入清單，再勾選要合併的音檔。"
             return {"ui": {"text": [msg]}, "result": (_empty_audio(), 0, 0.0, "")}
@@ -129,6 +161,17 @@ class FlowerAudioMerge:
             try:
                 # 載入音訊（torchaudio 支援 WAV、FLAC；MP3 需要 ffmpeg backend）
                 waveform, sr = torchaudio.load(full_path)
+
+                # ── 振幅安全防護 ──────────────────────────────────────────────────
+                # torchaudio 載入不同格式的音訊時，正規化行為可能不同：
+                # - 16/24-bit PCM WAV：自動正規化至 [-1, 1] ✓
+                # - 32-bit float WAV：原始值直讀，若某些 TTS 工具以 int 範圍值儲存
+                #   （如 ±32768）就會導致下游節點爆音
+                # 解法：峰值超過 1.0 時強制正規化，保持各檔案相對振幅比例
+                peak = waveform.abs().max().item()
+                if peak > 1.0:
+                    waveform = waveform / peak
+                    print(f"[FlowerAudioMerge]   ⚠ 振幅已正規化（原峰值 {peak:.3f} → 1.0）")
 
                 # 重新取樣至目標取樣率 48000 Hz
                 if sr != TARGET_SR:
@@ -188,13 +231,15 @@ async def list_audio_files(request):
     列出指定目錄中符合格式與關鍵字篩選的音檔清單（固定字母排序）。
 
     Query params：
-      directory - 目錄絕對路徑
-      format    - 格式篩選（ALL / WAV / MP3 / FLAC），預設 ALL
-      keyword   - 檔名關鍵字篩選（空白 = 不篩選）
+      directory       - 目錄絕對路徑
+      format          - 格式篩選（ALL / WAV / MP3 / FLAC），預設 ALL
+      keyword         - 篩選關鍵字（支援 & AND、| OR；空白 = 不篩選）
+      negativeKeyword - 排除關鍵字（同上語法；空白 = 不排除）
     """
-    directory  = request.rel_url.query.get("directory", "").strip()
-    fmt_filter = request.rel_url.query.get("format", "ALL")
-    keyword    = request.rel_url.query.get("keyword", "").strip().lower()
+    directory        = request.rel_url.query.get("directory", "").strip()
+    fmt_filter       = request.rel_url.query.get("format", "ALL")
+    keyword          = request.rel_url.query.get("keyword", "").strip()
+    negative_keyword = request.rel_url.query.get("negativeKeyword", "").strip()
 
     if not directory or not os.path.isdir(directory):
         return web.json_response({"error": "目錄不存在"}, status=404)
@@ -202,12 +247,15 @@ async def list_audio_files(request):
     extensions = _AUDIO_FORMATS.get(fmt_filter, _AUDIO_FORMATS["ALL"])
 
     try:
-        files = [
-            f for f in os.listdir(directory)
-            if os.path.splitext(f)[1].lower() in extensions
-            and (not keyword or keyword in f.lower())
-        ]
-        # 固定字母排序，與 Python 執行端保持一致
+        files = [f for f in os.listdir(directory)
+                 if os.path.splitext(f)[1].lower() in extensions]
+        # 套用篩選關鍵字
+        if keyword:
+            files = [f for f in files if _match_keyword_pattern(f, keyword)]
+        # 套用排除關鍵字
+        if negative_keyword:
+            files = [f for f in files if not _match_keyword_pattern(f, negative_keyword)]
+        # 固定字母排序
         files.sort(key=lambda f: f.lower())
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)

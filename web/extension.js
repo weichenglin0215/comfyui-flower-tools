@@ -117,7 +117,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
                     if (status === "selected" && config.selected_line) {
                         ctx.fillStyle = "#fff"; ctx.font = "italic 18px Arial";
-                        let pr = config.selected_line;
+                        // 多行單位只顯示第一行作為預覽，避免換行字元破壞版面
+                        let pr = config.selected_line.split('\n')[0];
                         if (ctx.measureText(pr).width > width - 450) pr = pr.substring(0, 30) + "...";
                         ctx.fillText(pr, width - 110, y + 23);
                     }
@@ -192,6 +193,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                             // 反饋回 JSON 框，使用多行格式 (Fix Task 2)
                             if (cfw) cfw.value = JSON.stringify(this.fileConfigs, null, 2);
                             rebuildFileButtons(this, data.files);
+                            // 🌸 Refresh 完成後立即向後端計算並顯示預覽，讓使用者了解目前設定的輸出結果
+                            this._updateResultPreview();
                         } else if (data && data.files && data.files.length === 0) {
                             // 如果目錄存在但真的是空的，可以選擇清空或保持。這裡選擇清空，因為 API 成功回傳了空陣列。
                             this.fileConfigs = {};
@@ -284,7 +287,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 listDiv.innerHTML = "";
                 lines.filter(l => l.toLowerCase().includes(f.toLowerCase())).forEach(line => {
                     const item = document.createElement('div');
-                    item.textContent = line; Object.assign(item.style, { padding: '15px', cursor: 'pointer', borderRadius: '8px', fontSize: '18px' });
+                    item.textContent = line; Object.assign(item.style, { padding: '15px', cursor: 'pointer', borderRadius: '8px', fontSize: '18px', whiteSpace: 'pre-wrap' });
                     item.onmouseover = () => item.style.backgroundColor = "#333"; item.onmouseout = () => item.style.backgroundColor = "transparent";
                     item.onclick = () => { updateCfg({ status: "selected", selected_line: line }); document.body.removeChild(overlay); };
                     listDiv.appendChild(item);
@@ -294,6 +297,41 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             render(""); overlay.appendChild(dialog);
             overlay.onclick = (e) => { if (e.target === overlay) document.body.removeChild(overlay); };
             document.body.appendChild(overlay); searchInput.focus();
+        };
+
+        // 🌸 向後端呼叫 preview-selection 端點，取得目前設定的輸出預覽並更新 result_dialog 🌸
+        // 顯示含原始 /* */ 註解的文字，與節點執行後的 ui 預覽行為完全一致。
+        nodeType.prototype._updateResultPreview = async function () {
+            const dirW  = this.widgets.find(w => w.name === "directory");
+            const seedW = this.widgets.find(w => w.name === "seed");
+            const cpW   = this.widgets.find(w => w.name === "continuous_processing");
+            const omW   = this.widgets.find(w => w.name === "output_mode");
+            const cfW   = this.widgets.find(w => w.name === "file_configs");
+            const resW  = this.widgets.find(w => w.name === "result_dialog");
+            if (!resW) return;
+
+            try {
+                const resp = await api.fetchApi("/flower-tools/preview-selection", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        directory:             dirW?.value  || "",
+                        seed:                  seedW?.value || 0,
+                        continuous_processing: cpW?.value   || 1,
+                        output_mode:           omW?.value   || false,
+                        file_configs:          cfW?.value   || "{}",
+                    })
+                });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.result !== undefined) {
+                    resW.value = data.result;
+                    if (resW.inputEl) resW.inputEl.value = resW.value;
+                    this.setDirtyCanvas(true);
+                }
+            } catch (e) {
+                console.warn("[FlowerMultilinePromptSelector] preview-selection 失敗：", e);
+            }
         };
     };
 
@@ -476,9 +514,45 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 }
             }
 
+            // Refresh 按鈕：不需執行節點即可立即預覽目錄中的文字檔清單
+            if (!this.widgets.find(w => w.name === "ltff_refresh_btn")) {
+                const rfBtn = this.addWidget("button", "🔄 Refresh File List (重新整理檔案清單)", null, async () => {
+                    const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
+                    const kw  = (this.widgets.find(w => w.name === "filter_keyword")?.value || "").trim();
+                    const nkw = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
+                    const fl  = this.widgets.find(w => w.name === "file_list_display");
+
+                    try {
+                        const resp = await api.fetchApi(
+                            `/flower-tools/list-text-files` +
+                            `?directory=${encodeURIComponent(dir)}` +
+                            `&keyword=${encodeURIComponent(kw)}` +
+                            `&negativeKeyword=${encodeURIComponent(nkw)}`
+                        );
+                        if (!resp.ok) {
+                            if (fl) { fl.value = `目錄不存在：${dir}`; if (fl.inputEl) fl.inputEl.value = fl.value; }
+                            return;
+                        }
+                        const data = await resp.json();
+                        if (fl) {
+                            fl.value = (data.files?.length > 0)
+                                ? data.files.map((f, i) => `${i}- ${f}`).join("\n")
+                                : "（無符合條件的文字檔案）";
+                            if (fl.inputEl) fl.inputEl.value = fl.value;
+                        }
+                        this.setDirtyCanvas(true);
+                    } catch (e) {
+                        console.error("[FlowerLoadTextFromFolder] Refresh 失敗：", e);
+                    }
+                });
+                rfBtn.name = "ltff_refresh_btn";
+                rfBtn.serialize = false;
+            }
+
             // 不自訂 computeSize 也不攔截 onResize——完全交給 ComfyUI 原生系統管理，
             // 就像 setupTCSCConverter 一樣，拖曳時節點高度自然伸縮，不會產生迴圈。
-            this.size = [500, 450];
+            // 初始高度加大以確保 refresh_btn 在所有 widget 之後仍可見
+            this.size = [500, 650];
         };
 
         // 從已儲存的工作流程載入後回填顯示值（由 onExecuted 在重新執行時更新，無需額外處理）
@@ -661,13 +735,15 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
                     const fmt = this.widgets.find(w => w.name === "inputFormatSelector")?.value || "ALL";
                     const kw  = (this.widgets.find(w => w.name === "filterKeyword")?.value || "").trim();
+                    const nkw = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
 
                     try {
                         const resp = await api.fetchApi(
                             `/flower-tools/list-audio-files` +
                             `?directory=${encodeURIComponent(dir)}` +
                             `&format=${encodeURIComponent(fmt)}` +
-                            `&keyword=${encodeURIComponent(kw)}`
+                            `&keyword=${encodeURIComponent(kw)}` +
+                            `&negativeKeyword=${encodeURIComponent(nkw)}`
                         );
                         if (!resp.ok) {
                             window.alert(`目錄不存在或無法存取：\n${dir}`);
@@ -682,6 +758,75 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 rfBtn.name = "refresh_btn";
                 rfBtn.serialize = false;
                 rfBtn._is_base_widget = true;
+            }
+
+            // 建立全選 / 全不選 / 反選 三連按鈕
+            // 使用 widgets.push() 直接推入自訂物件，完全掌控 draw 與 mouse 行為
+            if (!this.widgets.find(w => w.name === "select_buttons")) {
+                this.widgets.push({
+                    name:             "select_buttons",
+                    type:             "custom_triselect",   // 自訂 type，避免 LiteGraph 標準 button 渲染覆蓋
+                    serialize:        false,
+                    value:            null,
+                    _is_base_widget:  true,
+                    computeSize:      () => [220, 40],
+
+                    // 繪製三個並排按鈕（全選 / 全不選 / 反選）
+                    draw(ctx, node, width, y, height) {
+                        const labels = ["全選", "全不選", "反選"];
+                        const segW   = Math.floor((width - 40) / 3);
+                        ctx.save();
+                        for (let i = 0; i < 3; i++) {
+                            const bx = 20 + i * segW + 2;
+                            const bw = segW - 4;
+                            // 按鈕背景（中灰，在深色主題下清晰可見）
+                            ctx.fillStyle = "#555";
+                            ctx.fillRect(bx, y + 3, bw, 33);
+                            // 按鈕外框
+                            ctx.strokeStyle = "#999";
+                            ctx.lineWidth = 1;
+                            ctx.strokeRect(bx, y + 3, bw, 33);
+                            // 按鈕文字（白色，高對比）
+                            ctx.fillStyle = "#fff";
+                            ctx.font = "bold 14px Arial";
+                            ctx.textAlign = "center";
+                            ctx.textBaseline = "middle";
+                            ctx.fillText(labels[i], bx + bw / 2, y + 20);
+                        }
+                        ctx.restore();
+                    },
+
+                    // 滑鼠點擊處理：依 x 座標判斷點擊的是哪一段
+                    mouse(event, pos, node) {
+                        // 在 pointerdown 或 mousedown 時立即回應
+                        if (event.type !== "pointerdown" && event.type !== "mousedown") return false;
+                        if (!node.audioConfigs) return false;
+
+                        const totalW = node.size[0] - 40;
+                        const segW   = Math.floor(totalW / 3);
+                        const relX   = pos[0] - 20;
+                        if (relX < 0 || relX >= totalW) return false;
+                        const seg = Math.floor(relX / segW);
+
+                        if (seg === 0) {
+                            for (const k in node.audioConfigs) node.audioConfigs[k].enabled = true;
+                        } else if (seg === 1) {
+                            for (const k in node.audioConfigs) node.audioConfigs[k].enabled = false;
+                        } else if (seg === 2) {
+                            for (const k in node.audioConfigs) {
+                                node.audioConfigs[k].enabled = !node.audioConfigs[k].enabled;
+                            }
+                        } else {
+                            return false;
+                        }
+
+                        const cfw = node.widgets.find(w => w.name === "fileConfigs");
+                        if (cfw) cfw.value = JSON.stringify(node.audioConfigs, null, 2);
+                        _syncResultDialog(node);
+                        node.setDirtyCanvas(true);
+                        return true;
+                    }
+                });
             }
 
             // 建立 torchaudio 安裝按鈕（首次使用若環境未安裝可一鍵處理）
