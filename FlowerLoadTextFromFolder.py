@@ -40,6 +40,61 @@ def _get_sort_key(sort_mode):
         return lambda f: f.lower()
 
 
+# 章節標題正規式：行首（允許前置空白與各式括弧）後接「第 + 中文/阿拉伯數字 + 章」
+# 例：第一章、第十二章、第123章、【第三章】、（第二章）、「第五章」皆能命中
+_CHAPTER_RE = re.compile(
+    r'^[\s\[\(【「《（〈\<《【]*第[一二三四五六七八九十百千零〇兩0-9０-９]+章',
+    re.MULTILINE,
+)
+# 從章節匹配字串中再抽出純「第X章」標籤（去除前置空白與括弧）
+_CHAPTER_LABEL_RE = re.compile(r'第[一二三四五六七八九十百千零〇兩0-9０-９]+章')
+
+
+def _chapter_label(match_text):
+    """從章節匹配的原始字串中取出純『第X章』標籤；找不到回傳空字串。"""
+    m = _CHAPTER_LABEL_RE.search(match_text)
+    return m.group(0) if m else ""
+
+
+def _split_by_chapters(text):
+    """
+    依「第X章」章節標題將全文切成多個區塊。
+
+    規則：
+      - 第一個區塊：從檔頭到「第二章」之前（包含前言與第一章內容）
+      - 之後每個區塊：從該章標題行首到下一章標題行首之前
+      - 最後一個區塊：最末章到檔尾
+
+    若找不到任何章節標題（或僅有一個），回傳 [(0, len(text), "<label>")]。
+    回傳 [(start, end, chapter_label), ...] 列表，label 例如 "第一章"。
+    無章節時 label 為 ""；單一章節時 label 取唯一匹配的標籤。
+    """
+    n = len(text)
+    matches = list(_CHAPTER_RE.finditer(text))
+
+    # 沒有章節標題：整篇視為單一區塊，無標籤
+    if not matches:
+        return [(0, n, "")]
+
+    # 只有一個章節標題：整篇單一區塊，標籤取該章
+    if len(matches) == 1:
+        return [(0, n, _chapter_label(matches[0].group(0)))]
+
+    blocks = []
+    # 首區塊：0 → 第二章起點（含前言與第一章），標籤＝第一章
+    blocks.append((0, matches[1].start(), _chapter_label(matches[0].group(0))))
+    # 中間區塊：第i章起點 → 第(i+1)章起點，標籤＝第i章
+    for i in range(1, len(matches) - 1):
+        blocks.append((
+            matches[i].start(),
+            matches[i + 1].start(),
+            _chapter_label(matches[i].group(0)),
+        ))
+    # 末區塊：最末章起點 → 檔尾，標籤＝末章
+    blocks.append((matches[-1].start(), n, _chapter_label(matches[-1].group(0))))
+    return blocks
+
+
 def _compute_segments(text, max_chars, split_symbols):
     """
     將文字依照最大字數與分段符號切成多段。
@@ -128,6 +183,9 @@ class FlowerLoadTextFromFolder:
                 "max_chars_per_segment": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
                 # 8. 分段符號，回推時以此符號集為合法切斷點
                 "split_symbols": ("STRING", {"default": ",.?!;:，。？！；："}),
+                # 9. 是否先以「第X章」章節為單位切分，再於章內依字數分段
+                #    避免單一段落跨越兩個章節
+                "split_by_chapter": ("BOOLEAN", {"default": True}),
             },
         }
 
@@ -139,7 +197,7 @@ class FlowerLoadTextFromFolder:
 
     def load_text_from_folder(self, directory, filter_keyword, seed, continuous_processing,
                                sort_mode, max_chars_per_segment=-1, split_symbols=",.?!;:，。？！；：",
-                               negativeKeyword=""):
+                               negativeKeyword="", split_by_chapter=True):
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -172,7 +230,7 @@ class FlowerLoadTextFromFolder:
         if max_chars_per_segment >= 256:
             return self._load_with_segments(
                 base_dir, all_files, seed, continuous_processing,
-                max_chars_per_segment, split_symbols
+                max_chars_per_segment, split_symbols, split_by_chapter
             )
 
         # ── 直接模式（不分段）──
@@ -202,7 +260,7 @@ class FlowerLoadTextFromFolder:
         }
 
     def _load_with_segments(self, base_dir, all_files, seed, continuous_processing,
-                             max_chars, split_symbols):
+                             max_chars, split_symbols, split_by_chapter=True):
         """
         分段模式核心邏輯。
 
@@ -232,10 +290,24 @@ class FlowerLoadTextFromFolder:
                 continue
 
             name_no_ext = os.path.splitext(filename)[0]
-            segments = _compute_segments(text, max_chars, split_symbols)
+
+            # 先以章節為單位切塊（若關閉則整篇視為單一區塊），
+            # 再在每塊內依字數上限細分，確保段落不跨章。
+            if split_by_chapter:
+                chapter_blocks = _split_by_chapters(text)
+            else:
+                chapter_blocks = [(0, len(text), "")]
+
+            segments = []
+            for blk_start, blk_end, chap_label in chapter_blocks:
+                block_text = text[blk_start:blk_end]
+                for s, e in _compute_segments(block_text, max_chars, split_symbols):
+                    # 將區塊內相對位置還原為整篇絕對位置，並記錄所屬章節標籤
+                    segments.append((blk_start + s, blk_start + e, chap_label))
+
             total_segs = len(segments)
 
-            for seg_idx, (start, end) in enumerate(segments, 1):
+            for seg_idx, (start, end, chap_label) in enumerate(segments, 1):
                 virtual_entries.append({
                     'filename':     filename,
                     'full_path':    full_path,
@@ -244,6 +316,7 @@ class FlowerLoadTextFromFolder:
                     'total_segs':   total_segs,
                     'start':        start,
                     'end':          end,
+                    'chap_label':   chap_label,   # 章節標籤，如 "第一章"；無則為 ""
                 })
 
         if not virtual_entries:
@@ -262,16 +335,18 @@ class FlowerLoadTextFromFolder:
         except Exception as e:
             content = str(e)
 
-        # 產生虛擬分段清單（格式：序號- 檔名-段落號-結尾字元位置）
+        # 產生虛擬分段清單（格式：序號- 檔名-段落號-結尾字元位置[-第X章]）
         file_list_lines = []
         for i, e in enumerate(virtual_entries):
-            seg_label = f"{e['name_no_ext']}-{e['seg_num']:02d}-{e['end']}"
+            chap_suffix = f"-{e['chap_label']}" if e.get('chap_label') else ""
+            seg_label = f"{e['name_no_ext']}-{e['seg_num']:02d}-{e['end']}{chap_suffix}"
             file_list_lines.append(f"{i}- {seg_label}")
         file_list_str = "\n".join(file_list_lines)
 
         # 分段模式下，三個路徑輸出改用虛擬段落檔名
-        # 格式：檔名-段落號-結尾字元位置（與 file_list_display 顯示一致）
-        seg_suffix        = f"-{entry['seg_num']:02d}-{entry['end']}"
+        # 格式：檔名-段落號-結尾字元位置[-第X章]（與 file_list_display 顯示一致）
+        chap_suffix       = f"-{entry['chap_label']}" if entry.get('chap_label') else ""
+        seg_suffix        = f"-{entry['seg_num']:02d}-{entry['end']}{chap_suffix}"
         virtual_name_no_ext = entry['name_no_ext'] + seg_suffix
         virtual_filename    = virtual_name_no_ext + '.txt'
         virtual_full_path   = os.path.join(os.path.dirname(entry['full_path']), virtual_filename)
