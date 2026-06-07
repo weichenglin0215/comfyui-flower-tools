@@ -271,9 +271,9 @@ class FlowerLoadTextFromFolder:
           4. 依 seed / continuous_processing 算出索引，取出對應段落文字
 
         虛擬條目列表顯示格式（file_list_display）：
-          「序號- 檔名-段落序號(02d)-段落結尾字元位置」
-          例：0- 美如與倩兒-01-983
-              1- 美如與倩兒-02-1968
+          「序號- 檔名-段落序號(04d)-段落結尾字元位置」
+          例：0- 美如與倩兒-0001-983
+              1- 美如與倩兒-0002-1968
 
         這樣做的好處：seed 直接對應虛擬列表，不會因 continuous_processing
         影響而誤跳到不同檔案，解決跨檔案矛盾問題。
@@ -339,14 +339,14 @@ class FlowerLoadTextFromFolder:
         file_list_lines = []
         for i, e in enumerate(virtual_entries):
             chap_suffix = f"-{e['chap_label']}" if e.get('chap_label') else ""
-            seg_label = f"{e['name_no_ext']}-{e['seg_num']:02d}-{e['end']}{chap_suffix}"
+            seg_label = f"{e['name_no_ext']}-{e['seg_num']:04d}-{e['end']}{chap_suffix}"
             file_list_lines.append(f"{i}- {seg_label}")
         file_list_str = "\n".join(file_list_lines)
 
         # 分段模式下，三個路徑輸出改用虛擬段落檔名
         # 格式：檔名-段落號-結尾字元位置[-第X章]（與 file_list_display 顯示一致）
         chap_suffix       = f"-{entry['chap_label']}" if entry.get('chap_label') else ""
-        seg_suffix        = f"-{entry['seg_num']:02d}-{entry['end']}{chap_suffix}"
+        seg_suffix        = f"-{entry['seg_num']:04d}-{entry['end']}{chap_suffix}"
         virtual_name_no_ext = entry['name_no_ext'] + seg_suffix
         virtual_filename    = virtual_name_no_ext + '.txt'
         virtual_full_path   = os.path.join(os.path.dirname(entry['full_path']), virtual_filename)
