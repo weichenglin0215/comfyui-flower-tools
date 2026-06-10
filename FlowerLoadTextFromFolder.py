@@ -56,6 +56,111 @@ def _chapter_label(match_text):
     return m.group(0) if m else ""
 
 
+# 中文數字表（用於「字數自編章節」模式生成『第X章』標籤）
+_CN_DIGITS_TBL = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九']
+
+
+def _num_to_chinese(n: int) -> str:
+    """
+    將正整數轉為中文數字字串（支援 1~9999；超過則回退為阿拉伯數字）。
+    例：1→"一"、10→"十"、12→"十二"、21→"二十一"、100→"一百"、
+        101→"一百零一"、1000→"一千"、2025→"二千零二十五"
+    """
+    if n <= 0:
+        return '零'
+    if n < 10:
+        return _CN_DIGITS_TBL[n]
+    if n == 10:
+        return '十'
+    if n < 20:
+        return '十' + _CN_DIGITS_TBL[n - 10]
+    if n < 100:
+        t, o = divmod(n, 10)
+        return _CN_DIGITS_TBL[t] + '十' + (_CN_DIGITS_TBL[o] if o else '')
+    if n < 1000:
+        h, r = divmod(n, 100)
+        s = _CN_DIGITS_TBL[h] + '百'
+        if r == 0:
+            return s
+        if r < 10:
+            return s + '零' + _CN_DIGITS_TBL[r]
+        return s + _num_to_chinese(r)
+    if n < 10000:
+        k, r = divmod(n, 1000)
+        s = _CN_DIGITS_TBL[k] + '千'
+        if r == 0:
+            return s
+        if r < 100:
+            return s + '零' + _num_to_chinese(r)
+        return s + _num_to_chinese(r)
+    return str(n)
+
+
+def _split_by_char_count(text, chars_per_chapter):
+    """
+    依「接近但不超過」chars_per_chapter 的字數切塊，並要求在換行符號處切斷，
+    以避免從句子中間硬砍。每塊賦予『第X章』標籤。
+
+    規則（與 _compute_segments 類似）：
+      - 從目前起點向後算 chars_per_chapter 個字元，再回推找最近的換行 '\\n' / '\\r'
+        於換行之後切斷；找不到任何換行則強制在上限處截斷（避免無法前進）。
+      - 切斷後跳過開頭的空白與換行，避免下一塊以多餘空白起始。
+      - 若最後一塊長度 < chars_per_chapter / 2，併入前一塊（避免尾段過短，
+        實際長度可達 1.5 × chars_per_chapter 左右）。
+      - 章節標籤『第一章、第二章…』在合併完成後依序重新編號。
+
+    回傳 [(start, end, "第X章"), ...]。
+    """
+    n = len(text)
+    if n == 0:
+        return [(0, 0, "第一章")]
+
+    N = max(1, chars_per_chapter)
+
+    # 整篇不足上限：單一章
+    if n <= N:
+        return [(0, n, "第一章")]
+
+    blocks = []  # 暫存 (start, end)
+    start = 0
+    while start < n:
+        # 剩餘字數在上限以內 → 收尾為最後一塊
+        if (n - start) <= N:
+            blocks.append((start, n))
+            break
+
+        search_pos = start + N
+        cut = -1
+
+        # 回推尋找最近的換行符號；切點落在換行符號「之後」
+        for i in range(search_pos, start, -1):
+            if text[i - 1] in '\n\r':
+                cut = i
+                break
+
+        # 找不到換行 → 強制在上限處截斷，避免無法前進
+        if cut == -1:
+            cut = search_pos
+
+        blocks.append((start, cut))
+
+        # 跳過下一塊開頭的空白與換行
+        while cut < n and text[cut] in ' \n\r\t':
+            cut += 1
+        start = cut
+
+    # 尾段過短（< N/2）併入前一段，避免最後一章只有少量文字
+    if len(blocks) > 1 and (blocks[-1][1] - blocks[-1][0]) < (N // 2):
+        blocks[-2] = (blocks[-2][0], blocks[-1][1])
+        blocks.pop()
+
+    # 依序貼上『第X章』標籤
+    return [
+        (s, e, f"第{_num_to_chinese(i + 1)}章")
+        for i, (s, e) in enumerate(blocks)
+    ]
+
+
 def _split_by_chapters(text):
     """
     依「第X章」章節標題將全文切成多個區塊。
@@ -183,9 +288,17 @@ class FlowerLoadTextFromFolder:
                 "max_chars_per_segment": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
                 # 8. 分段符號，回推時以此符號集為合法切斷點
                 "split_symbols": ("STRING", {"default": ",.?!;:，。？！；："}),
-                # 9. 是否先以「第X章」章節為單位切分，再於章內依字數分段
-                #    避免單一段落跨越兩個章節
-                "split_by_chapter": ("BOOLEAN", {"default": True}),
+                # 9. 章節分段模式：
+                #    - 無：不分章節，整篇依字數上限分段，檔名不加「第X章」
+                #    - 根據章編號分章輸出(第一章)：偵測文中「第X章」標題切塊（預設）
+                #    - 根據字數自編章節輸出(4000字合成一章)：依 chars_per_auto_chapter
+                #      固定字數切塊，並自動命名為「第一章、第二章...」
+                "split_by_chapter": (
+                    ["無", "根據章編號分章輸出(第一章)", "根據字數自編章節輸出(4000字合成一章)"],
+                    {"default": "根據章編號分章輸出(第一章)"},
+                ),
+                # 10. 自編章節的限制字數：用於「根據字數自編章節輸出」模式
+                "chars_per_auto_chapter": ("INT", {"default": 4000, "min": 1, "max": 0xffffffffffffffff}),
             },
         }
 
@@ -197,7 +310,8 @@ class FlowerLoadTextFromFolder:
 
     def load_text_from_folder(self, directory, filter_keyword, seed, continuous_processing,
                                sort_mode, max_chars_per_segment=-1, split_symbols=",.?!;:，。？！；：",
-                               negativeKeyword="", split_by_chapter=True):
+                               negativeKeyword="", split_by_chapter="根據章編號分章輸出(第一章)",
+                               chars_per_auto_chapter=4000):
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -230,7 +344,8 @@ class FlowerLoadTextFromFolder:
         if max_chars_per_segment >= 256:
             return self._load_with_segments(
                 base_dir, all_files, seed, continuous_processing,
-                max_chars_per_segment, split_symbols, split_by_chapter
+                max_chars_per_segment, split_symbols, split_by_chapter,
+                chars_per_auto_chapter,
             )
 
         # ── 直接模式（不分段）──
@@ -260,7 +375,9 @@ class FlowerLoadTextFromFolder:
         }
 
     def _load_with_segments(self, base_dir, all_files, seed, continuous_processing,
-                             max_chars, split_symbols, split_by_chapter=True):
+                             max_chars, split_symbols,
+                             split_by_chapter="根據章編號分章輸出(第一章)",
+                             chars_per_auto_chapter=4000):
         """
         分段模式核心邏輯。
 
@@ -293,9 +410,12 @@ class FlowerLoadTextFromFolder:
 
             # 先以章節為單位切塊（若關閉則整篇視為單一區塊），
             # 再在每塊內依字數上限細分，確保段落不跨章。
-            if split_by_chapter:
+            # 依下拉選單決定章節切塊策略
+            if split_by_chapter == "根據章編號分章輸出(第一章)":
                 chapter_blocks = _split_by_chapters(text)
-            else:
+            elif split_by_chapter == "根據字數自編章節輸出(4000字合成一章)":
+                chapter_blocks = _split_by_char_count(text, chars_per_auto_chapter)
+            else:  # "無"：不分章，整篇單一區塊且無章節標籤
                 chapter_blocks = [(0, len(text), "")]
 
             segments = []
@@ -388,6 +508,48 @@ async def list_text_files(request):
         return web.json_response({"error": str(e)}, status=500)
 
     return web.json_response({"files": files})
+
+
+@PromptServer.instance.routes.get("/flower-tools/preview-text-segments")
+async def preview_text_segments(request):
+    """
+    完整模擬節點執行，回傳目前設定下會輸出的 content_preview 與 file_list_display。
+    供 JS 的 refresh_btn 即時預覽分段／章節結果使用，不需執行整個工作流程。
+
+    Query params 對應節點所有 INPUT_TYPES 欄位。
+    """
+    q = request.rel_url.query
+
+    def _qi(name, default):
+        try:
+            return int(q.get(name, str(default)) or default)
+        except (ValueError, TypeError):
+            return default
+
+    node = FlowerLoadTextFromFolder()
+    try:
+        result = node.load_text_from_folder(
+            directory             = q.get("directory", ""),
+            filter_keyword        = q.get("filter_keyword", ""),
+            seed                  = _qi("seed", 0),
+            continuous_processing = _qi("continuous_processing", 1),
+            sort_mode             = q.get("sort_mode", "字母排序(Alphabetical)"),
+            max_chars_per_segment = _qi("max_chars_per_segment", -1),
+            split_symbols         = q.get("split_symbols", ",.?!;:，。？！；："),
+            negativeKeyword       = q.get("negativeKeyword", ""),
+            split_by_chapter      = q.get("split_by_chapter", "根據章編號分章輸出(第一章)"),
+            chars_per_auto_chapter = _qi("chars_per_auto_chapter", 4000),
+        )
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+    ui = result.get("ui", {}) if isinstance(result, dict) else {}
+    text_list = ui.get("text") or [""]
+    file_list = ui.get("file_list") or [""]
+    return web.json_response({
+        "text":      text_list[0] if text_list else "",
+        "file_list": file_list[0] if file_list else "",
+    })
 
 
 NODE_CLASS_MAPPINGS = {"FlowerLoadTextFromFolder": FlowerLoadTextFromFolder}

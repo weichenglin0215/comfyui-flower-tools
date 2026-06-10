@@ -517,32 +517,51 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             // Refresh 按鈕：不需執行節點即可立即預覽目錄中的文字檔清單
             if (!this.widgets.find(w => w.name === "ltff_refresh_btn")) {
                 const rfBtn = this.addWidget("button", "🔄 Refresh File List (重新整理檔案清單)", null, async () => {
-                    const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
-                    const kw  = (this.widgets.find(w => w.name === "filter_keyword")?.value || "").trim();
-                    const nkw = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
-                    const fl  = this.widgets.find(w => w.name === "file_list_display");
+                    // 收集所有與輸出相關的 widget 值，呼叫後端執行完整節點邏輯以取得預覽
+                    const wv = (n, d = "") => {
+                        const w = this.widgets.find(w => w.name === n);
+                        return w && w.value != null ? String(w.value) : d;
+                    };
+                    const cp = this.widgets.find(w => w.name === "content_preview");
+                    const fl = this.widgets.find(w => w.name === "file_list_display");
+
+                    const params = new URLSearchParams({
+                        directory:              wv("directory", "").trim(),
+                        filter_keyword:         wv("filter_keyword", "").trim(),
+                        negativeKeyword:        wv("negativeKeyword", "").trim(),
+                        seed:                   wv("seed", "0"),
+                        continuous_processing:  wv("continuous_processing", "1"),
+                        sort_mode:              wv("sort_mode", "字母排序(Alphabetical)"),
+                        max_chars_per_segment:  wv("max_chars_per_segment", "-1"),
+                        split_symbols:          wv("split_symbols", ",.?!;:，。？！；："),
+                        split_by_chapter:       wv("split_by_chapter", "根據章編號分章輸出(第一章)"),
+                        chars_per_auto_chapter: wv("chars_per_auto_chapter", "4000"),
+                    });
 
                     try {
                         const resp = await api.fetchApi(
-                            `/flower-tools/list-text-files` +
-                            `?directory=${encodeURIComponent(dir)}` +
-                            `&keyword=${encodeURIComponent(kw)}` +
-                            `&negativeKeyword=${encodeURIComponent(nkw)}`
+                            `/flower-tools/preview-text-segments?${params.toString()}`
                         );
                         if (!resp.ok) {
-                            if (fl) { fl.value = `目錄不存在：${dir}`; if (fl.inputEl) fl.inputEl.value = fl.value; }
+                            const errMsg = `預覽失敗（HTTP ${resp.status}）`;
+                            if (cp) { cp.value = errMsg; if (cp.inputEl) cp.inputEl.value = cp.value; }
+                            if (fl) { fl.value = errMsg; if (fl.inputEl) fl.inputEl.value = fl.value; }
+                            this.setDirtyCanvas(true);
                             return;
                         }
                         const data = await resp.json();
+                        if (cp) {
+                            cp.value = data.text || "";
+                            if (cp.inputEl) cp.inputEl.value = cp.value;
+                        }
                         if (fl) {
-                            fl.value = (data.files?.length > 0)
-                                ? data.files.map((f, i) => `${i}- ${f}`).join("\n")
-                                : "（無符合條件的文字檔案）";
+                            fl.value = data.file_list || "";
                             if (fl.inputEl) fl.inputEl.value = fl.value;
                         }
                         this.setDirtyCanvas(true);
                     } catch (e) {
                         console.error("[FlowerLoadTextFromFolder] Refresh 失敗：", e);
+                        if (cp) { cp.value = `預覽失敗：${e}`; if (cp.inputEl) cp.inputEl.value = cp.value; }
                     }
                 });
                 rfBtn.name = "ltff_refresh_btn";

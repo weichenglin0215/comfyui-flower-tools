@@ -6,6 +6,7 @@ FlowerAudioMerge - 合併多個音訊檔案為單一輸出
 """
 
 import os
+import re
 import json
 import sys
 import subprocess
@@ -62,6 +63,38 @@ def _empty_audio():
     return {"waveform": torch.zeros(1, 2, 1), "sample_rate": 48000}
 
 
+# 章節標籤正規式：從音檔檔名中抓取「第X章」標籤
+_CHAPTER_LABEL_RE = re.compile(r'第[一二三四五六七八九十百千零〇兩0-9０-９]+章')
+
+# 中文數字列表（用於章節標籤排序比對）
+_CN_DIGITS = "一二三四五六七八九十百千零〇兩"
+
+
+def _extract_chapter_label(filename: str) -> str:
+    """從音檔檔名中提取章節標籤（如「第一章」）；找不到則回傳空字串。"""
+    m = _CHAPTER_LABEL_RE.search(filename)
+    return m.group(0) if m else ""
+
+
+def _chapter_sort_key(label: str) -> tuple:
+    """
+    將「第X章」標籤轉換為可排序的 key。
+    規則：阿拉伯數字直接轉 int；中文數字以字元在字串中的位置排序。
+    空字串排在最後。
+    """
+    if not label:
+        return (999999, label)
+    # 提取 X 部分
+    inner = label[1:-1]  # 去掉「第」和「章」
+    # 若純阿拉伯數字
+    digits_only = re.sub(r'[０-９]', lambda m: str(ord(m.group(0)) - ord('０')), inner)
+    digits_only = re.sub(r'[0-9]+', lambda m: m.group(0), digits_only)
+    if re.fullmatch(r'\d+', digits_only):
+        return (int(digits_only), label)
+    # 中文數字：以字元序列的字典序排序（簡易處理）
+    return (0, label)
+
+
 class FlowerAudioMerge:
     """
     ComfyUI 節點：從指定目錄中讀取音訊檔案，依使用者勾選清單串接為單一輸出。
@@ -69,8 +102,13 @@ class FlowerAudioMerge:
     工作流程：
       1. 輸入目錄路徑、篩選關鍵字、輸入格式
       2. 點擊 refresh_btn 重新整理音檔清單（透過 JS 呼叫 API）
-      3. 在清單中勾選要合併的音檔
+      3. 在清單中勾選要合併的音檔（無強制模式）或使用 seed 控制批次（強制模式）
       4. 執行節點，輸出合併後的 AUDIO tensor
+
+    強制自動輸出模式（autoOutputMode）：
+      - 無強制自動輸出：使用 fileConfigs 中的勾選狀態（原有功能）
+      - 強制自動依章節分段輸出：seed 決定輸出哪個章節的所有音檔
+      - 強制自動依檔案數量分段輸出：seed × autoSegmentCount 決定輸出哪批音檔
     """
 
     @classmethod
@@ -92,6 +130,16 @@ class FlowerAudioMerge:
                 # 6. 音檔勾選狀態（JSON 格式，由 JS 前端自動讀寫，用於工作流程儲存與還原）
                 # 輸出格式與品質設定由下游 Save Audio 節點負責，本節點輸出格式無關的 float32 tensor
                 "fileConfigs": ("STRING", {"multiline": True, "default": "{}"}),
+                # 7. 強制自動輸出模式
+                #    - 無強制自動輸出：使用 fileConfigs 中的勾選狀態（原有功能）
+                #    - 強制自動依章節分段輸出：seed 決定輸出哪個章節的所有音檔
+                #    - 強制自動依檔案數量分段輸出：seed × autoSegmentCount 決定輸出哪批音檔
+                "autoOutputMode": (["無強制自動輸出", "強制自動依章節分段輸出", "強制自動依檔案數量分段輸出"],),
+                # 8. seed：控制強制輸出時的批次索引
+                #    ComfyUI 框架會自動在 seed 下方加入「生成後控制」（fixed/increment/decrement/randomize）
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                # 9. 自動分段的檔案數量：「強制自動依檔案數量分段輸出」模式下每批的檔案數
+                "autoSegmentCount": ("INT", {"default": 4, "min": 1, "max": 9999}),
             },
         }
 
@@ -102,9 +150,15 @@ class FlowerAudioMerge:
     OUTPUT_NODE = True
 
     def merge_audio(self, directory, filterKeyword, negativeKeyword, inputFormatSelector,
-                    appendOutputName, fileConfigs):
+                    appendOutputName, fileConfigs, autoOutputMode, seed, autoSegmentCount):
         """
-        主執行方法：載入已勾選音檔，統一重新取樣後串接，回傳 ComfyUI AUDIO 格式。
+        主執行方法：載入已勾選（或依 seed 自動選取）的音檔，統一重新取樣後串接，
+        回傳 ComfyUI AUDIO 格式。
+
+        autoOutputMode 三種模式：
+          無強制自動輸出      - 使用 fileConfigs 的勾選狀態（原有邏輯）
+          強制自動依章節分段  - 以 seed 決定章節索引，輸出該章節所有音檔
+          強制自動依數量分段  - 以 seed × autoSegmentCount 決定檔案範圍
 
         輸出為格式無關的 float32 tensor，下游 Save Audio 節點負責格式轉換：
           - 取樣率：48000 Hz
@@ -115,7 +169,7 @@ class FlowerAudioMerge:
           audio    - ComfyUI AUDIO {waveform: Tensor(1, 2, N), sample_rate: 48000}
           count    - 實際成功載入並合併的音檔數量
           length   - 合併後總時長（秒，小數點以下兩位）
-          fileName - 第一個被勾選音檔的檔名（不含路徑與副檔名）+ appendOutputName
+          fileName - 第一個被選取音檔的檔名（不含路徑與副檔名）+ appendOutputName
         """
         # 檢查 torchaudio 是否可用
         if not _HAS_TORCHAUDIO:
@@ -128,6 +182,14 @@ class FlowerAudioMerge:
             err = f"錯誤：目錄不存在 [{base_dir}]"
             return {"ui": {"text": [err]}, "result": (_empty_audio(), 0, 0.0, "")}
 
+        # ── 強制自動輸出模式 ──────────────────────────────────────────────────────
+        if autoOutputMode != "無強制自動輸出":
+            return self._merge_auto(
+                base_dir, filterKeyword, negativeKeyword, inputFormatSelector,
+                appendOutputName, autoOutputMode, seed, autoSegmentCount
+            )
+
+        # ── 原有邏輯（無強制自動輸出）─────────────────────────────────────────────
         # 解析 fileConfigs JSON，取得已勾選的檔案清單
         try:
             configs = json.loads(fileConfigs) if fileConfigs.strip() else {}
@@ -150,6 +212,125 @@ class FlowerAudioMerge:
             msg = "尚未勾選任何音檔。請先點擊 Refresh 載入清單，再勾選要合併的音檔。"
             return {"ui": {"text": [msg]}, "result": (_empty_audio(), 0, 0.0, "")}
 
+        return self._do_merge(base_dir, enabled_files, appendOutputName)
+
+    def _get_filtered_files(self, base_dir, filterKeyword, negativeKeyword, inputFormatSelector):
+        """
+        取得目錄中符合格式與關鍵字篩選的音檔清單（字母排序）。
+        用於強制自動輸出模式。
+        """
+        extensions = _AUDIO_FORMATS.get(inputFormatSelector, _AUDIO_FORMATS["ALL"])
+        try:
+            files = [f for f in os.listdir(base_dir)
+                     if os.path.splitext(f)[1].lower() in extensions]
+        except Exception as e:
+            return []
+
+        if filterKeyword.strip():
+            files = [f for f in files if _match_keyword_pattern(f, filterKeyword)]
+        if negativeKeyword.strip():
+            files = [f for f in files if not _match_keyword_pattern(f, negativeKeyword)]
+        files.sort(key=lambda f: f.lower())
+        return files
+
+    def _merge_auto(self, base_dir, filterKeyword, negativeKeyword, inputFormatSelector,
+                    appendOutputName, autoOutputMode, seed, autoSegmentCount):
+        """強制自動輸出模式的核心邏輯。seed 直接作為批次索引。"""
+        all_files = self._get_filtered_files(base_dir, filterKeyword, negativeKeyword, inputFormatSelector)
+
+        if not all_files:
+            msg = "目錄中沒有符合條件的音檔。請確認目錄路徑與篩選設定。"
+            return {"ui": {"text": [msg]}, "result": (_empty_audio(), 0, 0.0, "")}
+
+        process_idx = seed  # seed 直接對應批次索引（生成後控制由 ComfyUI 框架處理）
+
+        if autoOutputMode == "強制自動依章節分段輸出":
+            enabled_files, chapter_label = self._select_by_chapter(all_files, process_idx)
+        else:  # 強制自動依檔案數量分段輸出
+            enabled_files = self._select_by_count(all_files, process_idx, autoSegmentCount)
+            chapter_label = ""
+
+        if not enabled_files:
+            msg = f"強制自動輸出：目前 seed={seed} 對應批次無檔案（共 {len(all_files)} 個音檔）。"
+            return {"ui": {"text": [msg]}, "result": (_empty_audio(), 0, 0.0, "")}
+
+        # 章節模式下，附加章節標籤於 appendOutputName 之前
+        effective_append = (f"-{chapter_label}" if chapter_label else "") + appendOutputName
+        return self._do_merge(base_dir, enabled_files, effective_append)
+
+    def _select_by_chapter(self, all_files, process_idx):
+        """
+        依章節分組，以 process_idx 選取章節。
+        回傳 (selected_files, chapter_label)。
+        無法找到任何章節標籤時，將全部檔案視為單一章節。
+        """
+        # 分組：chapter_label → [filename, ...]（依原始字母排序）
+        groups = {}  # OrderedDict 效果：先出現的 key 在前
+        order = []   # 維持章節首次出現的順序
+
+        for f in all_files:
+            label = _extract_chapter_label(f)
+            if label not in groups:
+                groups[label] = []
+                order.append(label)
+            groups[label].append(f)
+
+        # 若只有空字串 key（完全沒有章節標籤），將全部視為單一組
+        if order == [""]:
+            print(f"[FlowerAudioMerge] ⚠ 檔名中找不到章節標籤，全部視為單一章節輸出")
+            return all_files, ""
+
+        # 依章節標籤排序：先嘗試從標籤抽出數字做數值排序
+        def _label_sort_key(label):
+            if not label:
+                return (999999, label)
+            inner = label[1:-1]  # 去掉「第」和「章」
+            # 全形數字轉半形
+            inner_hf = ''.join(
+                chr(ord(c) - ord('０') + ord('0')) if '０' <= c <= '９' else c
+                for c in inner
+            )
+            if re.fullmatch(r'\d+', inner_hf):
+                return (int(inner_hf), label)
+            # 中文數字：用字串順序粗略排序
+            return (0, label)
+
+        sorted_labels = sorted([l for l in order if l], key=_label_sort_key)
+        # 空標籤（無章節）放最後
+        if "" in order:
+            sorted_labels.append("")
+
+        chapter_idx = process_idx % len(sorted_labels)
+        chosen_label = sorted_labels[chapter_idx]
+        selected_files = groups[chosen_label]
+
+        print(f"[FlowerAudioMerge] 強制依章節：seed→process_idx={process_idx}, "
+              f"章節={chosen_label}（共 {len(sorted_labels)} 章），"
+              f"選取 {len(selected_files)} 個檔案")
+        return selected_files, chosen_label
+
+    def _select_by_count(self, all_files, process_idx, autoSegmentCount):
+        """
+        依固定數量分批，以 process_idx 選取批次。
+        seed=0 → 第1批（索引0~N-1），seed=1 → 第2批，依此類推。
+        超出範圍時取最後一批（不循環，避免重複輸出）。
+        """
+        n = len(all_files)
+        total_batches = max(1, (n + autoSegmentCount - 1) // autoSegmentCount)
+        batch_idx = process_idx % total_batches  # 以 modulo 循環
+        start = batch_idx * autoSegmentCount
+        end = min(start + autoSegmentCount, n)
+        selected = all_files[start:end]
+
+        print(f"[FlowerAudioMerge] 強制依數量：seed→process_idx={process_idx}, "
+              f"批次={batch_idx+1}/{total_batches}，"
+              f"選取索引 {start}~{end-1}，共 {len(selected)} 個檔案")
+        return selected
+
+    def _do_merge(self, base_dir, enabled_files, appendOutputName):
+        """
+        載入指定音檔清單，統一重新取樣後串接，回傳 ComfyUI AUDIO 格式。
+        """
         TARGET_SR = 48000  # 統一取樣率：48000 Hz
         segments = []
 
@@ -208,7 +389,7 @@ class FlowerAudioMerge:
             "sample_rate": TARGET_SR,
         }
 
-        # fileName：第一個被勾選音檔的檔名（去除副檔名）+ appendOutputName
+        # fileName：第一個被選取音檔的檔名（去除副檔名）+ appendOutputName
         first_name_no_ext = os.path.splitext(enabled_files[0])[0]
         file_name_out = first_name_no_ext + appendOutputName
 
