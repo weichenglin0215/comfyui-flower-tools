@@ -9,28 +9,51 @@ from aiohttp import web
 def _parse_units(content):
     """
     解析文字內容為獨立單位：
-    - 以 { 開頭的行開始一個多行區塊，直到單獨的 }、},（全形半形皆可）結束，整個區塊為一個單位
+    - 區塊起始：`{` 必須在「行首」（strip 後以 `{` 開頭）
+    - 區塊結束：`}` 必須在「行尾」（strip 後以 `}` 結尾，可附加 `,`/`，`，全形半形皆可），不必在行首
+    - 支援巢狀：內層 `{...}` 仍依同規則計算深度，整個巢狀區塊視為單一單位
     - 區塊以外的非空行各自為一個獨立單位
+    最外層的 `{`/`}` 標記不會包含在輸出單位中；內層巢狀的括號則原樣保留
     """
     units = []
     lines = content.splitlines()
+    end_re = re.compile(r'[}｝][,，]?\s*$')   # 行尾結束符（半形/全形皆可）
+    trim_end_re = re.compile(r'[}｝][,，]?\s*$')  # 用於去除最外層收尾 }
     i = 0
     while i < len(lines):
         stripped = lines[i].strip()
         if stripped.startswith('{'):
-            # 多行區塊開始，{ 後面同行可能還有內容
+            # 區塊起始
+            depth = 1
             block_parts = []
-            after_brace = stripped[1:].strip()
-            if after_brace:
-                block_parts.append(after_brace)
+            # 處理起始行 `{` 後面的同行內容
+            first_rest = stripped[1:]
+            if end_re.search(first_rest):
+                # 同一行就出現最外層結尾 }（單行區塊）
+                depth -= 1
+                first_rest = trim_end_re.sub('', first_rest).rstrip()
+            first_rest = first_rest.strip()
+            if first_rest:
+                block_parts.append(first_rest)
             i += 1
-            # 收集直到結尾符號 }、},（半形/全形皆可）
-            while i < len(lines):
-                block_stripped = lines[i].strip()
-                if re.match(r'^[}｝][,，]?\s*$', block_stripped):
+            # 持續收集直到 depth 歸 0
+            while depth > 0 and i < len(lines):
+                line = lines[i]
+                line_stripped = line.strip()
+                # 行首 `{` 提升深度（內層巢狀區塊）
+                if line_stripped.startswith('{'):
+                    depth += 1
+                # 行尾 `}` 降低深度
+                if end_re.search(line_stripped):
+                    depth -= 1
+                if depth == 0:
+                    # 此行為最外層收尾，需移除尾端 } 並保留前面可能存在的內容
+                    trimmed = trim_end_re.sub('', line).rstrip()
+                    if trimmed.strip():
+                        block_parts.append(trimmed)
                     i += 1
                     break
-                block_parts.append(lines[i])
+                block_parts.append(line)
                 i += 1
             # EOF 未遇到結尾符號時，仍將已收集內容作為單位輸出
             unit = '\n'.join(block_parts).strip()

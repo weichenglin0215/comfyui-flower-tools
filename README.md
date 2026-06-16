@@ -298,6 +298,8 @@ ComfyUI/
 您也可以在 Prompt Selector 節點的 `directory` 欄位輸入絕對路徑來讀取其他位置的檔案。
 
 ## 📜 更新日誌 (Changelog)
+*   **2026-06-16 (v1.8.5)**:
+    *   `🌸Flower Multiline Prompt Selector` "{}"行首行尾條件更改。
 *   **2026-06-10 (v1.8.4)**:
     *   `🌸Flower Load Text From Folder` 章節分段功能大幅強化：
         *   `split_by_chapter` 由勾選框改為**下拉選單**三選項：`無` / `根據章編號分章輸出(第一章)` / `根據字數自編章節輸出(4000字合成一章)`，預設「根據章編號分章輸出(第一章)」。
