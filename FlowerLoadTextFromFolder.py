@@ -419,15 +419,15 @@ class FlowerLoadTextFromFolder:
                 chapter_blocks = [(0, len(text), "")]
 
             segments = []
-            for blk_start, blk_end, chap_label in chapter_blocks:
+            for chap_idx, (blk_start, blk_end, chap_label) in enumerate(chapter_blocks, 1):
                 block_text = text[blk_start:blk_end]
                 for s, e in _compute_segments(block_text, max_chars, split_symbols):
                     # 將區塊內相對位置還原為整篇絕對位置，並記錄所屬章節標籤
-                    segments.append((blk_start + s, blk_start + e, chap_label))
+                    segments.append((blk_start + s, blk_start + e, chap_label, chap_idx))
 
             total_segs = len(segments)
 
-            for seg_idx, (start, end, chap_label) in enumerate(segments, 1):
+            for seg_idx, (start, end, chap_label, chap_num) in enumerate(segments, 1):
                 virtual_entries.append({
                     'filename':     filename,
                     'full_path':    full_path,
@@ -437,6 +437,7 @@ class FlowerLoadTextFromFolder:
                     'start':        start,
                     'end':          end,
                     'chap_label':   chap_label,   # 章節標籤，如 "第一章"；無則為 ""
+                    'chap_num':     chap_num,     # 1-based 章節序號（三位數用）
                 })
 
         if not virtual_entries:
@@ -455,18 +456,18 @@ class FlowerLoadTextFromFolder:
         except Exception as e:
             content = str(e)
 
-        # 產生虛擬分段清單（格式：序號- 檔名-段落號-結尾字元位置[-第X章]）
+        # 產生虛擬分段清單（格式：序號- 檔名-XXX第X章-段落號-結尾字元位置）
         file_list_lines = []
         for i, e in enumerate(virtual_entries):
-            chap_suffix = f"-{e['chap_label']}" if e.get('chap_label') else ""
-            seg_label = f"{e['name_no_ext']}-{e['seg_num']:04d}-{e['end']}{chap_suffix}"
+            chap_prefix = f"-{e['chap_num']:03d}{e['chap_label']}" if e.get('chap_label') else ""
+            seg_label = f"{e['name_no_ext']}{chap_prefix}-{e['seg_num']:04d}-{e['end']}"
             file_list_lines.append(f"{i}- {seg_label}")
         file_list_str = "\n".join(file_list_lines)
 
         # 分段模式下，三個路徑輸出改用虛擬段落檔名
-        # 格式：檔名-段落號-結尾字元位置[-第X章]（與 file_list_display 顯示一致）
-        chap_suffix       = f"-{entry['chap_label']}" if entry.get('chap_label') else ""
-        seg_suffix        = f"-{entry['seg_num']:04d}-{entry['end']}{chap_suffix}"
+        # 格式：檔名-XXX第X章-段落號-結尾字元位置（與 file_list_display 顯示一致）
+        chap_prefix       = f"-{entry['chap_num']:03d}{entry['chap_label']}" if entry.get('chap_label') else ""
+        seg_suffix        = f"{chap_prefix}-{entry['seg_num']:04d}-{entry['end']}"
         virtual_name_no_ext = entry['name_no_ext'] + seg_suffix
         virtual_filename    = virtual_name_no_ext + '.txt'
         virtual_full_path   = os.path.join(os.path.dirname(entry['full_path']), virtual_filename)

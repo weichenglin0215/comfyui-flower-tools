@@ -211,7 +211,7 @@
         *   依 `chars_per_auto_chapter`（預設 4000）的字數上限切塊，且**必須在換行符號處切斷**，避免從句子中間硬砍。
         *   尾段若不足上限的一半（如 < 2000 字）會自動併入前一塊，最後一章實際長度可達約 1.5 倍上限（~6000 字）。
         *   切出的區塊會自動命名為 `第一章、第二章…` 並附加到輸出檔名。
-    *   輸出檔名會自動於末尾附加章節標籤，例如：`亦舒《喜寶》-V400-AI語音用-0001-984-第一章`。
+    *   輸出檔名會自動於末尾附加章節標籤，例如：`亦舒《喜寶》-V400-AI語音用-001第一章-0001-984`。
 *   **即時預覽（Refresh 按鈕）**：點擊 🔄 Refresh 後，會直接呼叫後端完整跑一次節點邏輯，立即更新 `content_preview`（依目前 seed 對應的段落內容）與 `file_list_display`（完整虛擬分段清單），無需執行工作流程即可確認結果。
 
 ![FlowerLoadTextFromFolder_demo](images/FlowerLoadTextFromFolder_demo.png)
@@ -298,6 +298,8 @@ ComfyUI/
 您也可以在 Prompt Selector 節點的 `directory` 欄位輸入絕對路徑來讀取其他位置的檔案。
 
 ## 📜 更新日誌 (Changelog)
+*   **2026-06-16 (v1.8.6)**:
+    *   `🌸Flower Load Text From Folder` 章節分段輸出檔名中的"第X章"往前移並加入三位數編號。
 *   **2026-06-16 (v1.8.5)**:
     *   `🌸Flower Multiline Prompt Selector` "{}"行首行尾條件更改。
 *   **2026-06-10 (v1.8.4)**:
