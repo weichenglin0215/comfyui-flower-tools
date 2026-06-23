@@ -87,14 +87,18 @@ def _resolve_base_dir(directory):
     return os.path.abspath(os.path.join(default_dir, base_dir))
 
 
+# 🌸 支援的文字檔副檔名（.txt 與 .md 皆可讀取）🌸
+SUPPORTED_EXTS = (".txt", ".md")
+
+
 def _build_file_list(base_dir, configs):
     """
     依照 configs 中 key 的順序建立有序的檔案清單，
-    configs 中未包含的剩餘 .txt 檔以 ASCII 優先排序補在後面
+    configs 中未包含的剩餘文字檔（.txt / .md）以 ASCII 優先排序補在後面
     """
     ordered_files = [
         fn for fn in configs.keys()
-        if fn.endswith(".txt") and os.path.exists(os.path.join(base_dir, fn))
+        if fn.endswith(SUPPORTED_EXTS) and os.path.exists(os.path.join(base_dir, fn))
     ]
 
     def ascii_first_key(f):
@@ -103,9 +107,28 @@ def _build_file_list(base_dir, configs):
         parts = [int(p) if p.isdigit() else p for p in parts]
         return (0 if is_ascii else 1, parts)
 
-    remaining = [f for f in os.listdir(base_dir) if f.endswith(".txt") and f not in configs]
+    remaining = [f for f in os.listdir(base_dir) if f.endswith(SUPPORTED_EXTS) and f not in configs]
     remaining.sort(key=ascii_first_key)
     return ordered_files + remaining
+
+
+# 🌸 輸出模式常數 🌸
+MODE_COMBINATION = "組合模式 Combination"
+MODE_SEQUENTIAL = "循序模式 Sequential"
+MODE_WHOLE_FILE = "依序輸出整個文字檔 Whole File"
+OUTPUT_MODE_OPTIONS = [MODE_COMBINATION, MODE_SEQUENTIAL, MODE_WHOLE_FILE]
+
+
+def _normalize_output_mode(value):
+    """
+    將 output_mode 標準化為三種模式字串。
+    向後相容：舊版工作流程可能存為 bool（True=循序、False=組合）。
+    """
+    if isinstance(value, bool):
+        return MODE_SEQUENTIAL if value else MODE_COMBINATION
+    if isinstance(value, str) and value in OUTPUT_MODE_OPTIONS:
+        return value
+    return MODE_COMBINATION
 
 
 def _compute_selection(base_dir, configs, files, process_idx, output_mode):
@@ -113,7 +136,25 @@ def _compute_selection(base_dir, configs, files, process_idx, output_mode):
     依照目前設定計算選取結果（含原始 /*...*/ 註解，不做刪除）。
     供 select_multiline_prompt 與 preview-selection API 共用，避免邏輯重複。
     """
-    if output_mode:  # 循序模式：所有檔案的單位合併成全域池後依序取出
+    mode = _normalize_output_mode(output_mode)
+
+    # 🌸 模式三：依序輸出整個文字檔 🌸
+    # 只要狀態不是 disabled 就視為啟用，按 process_idx 依序輪流輸出整個檔案內容
+    if mode == MODE_WHOLE_FILE:
+        enabled_files = [
+            fn for fn in files
+            if configs.get(fn, {"status": "disabled"}).get("status", "disabled") != "disabled"
+        ]
+        if not enabled_files:
+            return ""
+        target = enabled_files[process_idx % len(enabled_files)]
+        try:
+            with open(os.path.join(base_dir, target), "r", encoding="utf-8") as f:
+                return f.read()
+        except:
+            return ""
+
+    if mode == MODE_SEQUENTIAL:  # 循序模式：所有檔案的單位合併成全域池後依序取出
         global_pool = []
         for filename in files:
             file_cfg = configs.get(filename, {"status": "disabled"})
@@ -179,8 +220,8 @@ class FlowerMultilinePromptSelector:
                 # Index 1 & 2: seed & continuous_processing
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "continuous_processing": ("INT", {"default": 1, "min": 1, "max": 9999999}),
-                # Index 3: output_mode
-                "output_mode": ("BOOLEAN", {"default": False, "label_on": "循序模式(Sequential)", "label_off": "組合模式(Combination)"}),
+                # Index 3: output_mode（下拉式選單：組合 / 循序 / 整個文字檔）
+                "output_mode": (OUTPUT_MODE_OPTIONS, {"default": MODE_COMBINATION}),
                 # Index 4: remove_comments（預設勾選，輸出時刪除 /**/ 註解）
                 "remove_comments": ("BOOLEAN", {"default": True, "label_on": "輸出時刪除/**/註解", "label_off": "輸出保留/**/註解"}),
                 # Index 5: file_configs
@@ -237,7 +278,7 @@ async def list_files(request):
 
     files = []
     try:
-        f_list = [f for f in os.listdir(base_dir) if f.endswith(".txt")]
+        f_list = [f for f in os.listdir(base_dir) if f.endswith(SUPPORTED_EXTS)]
         f_list.sort(key=sort_key)
         for f in f_list:
             path = os.path.join(base_dir, f)
@@ -288,7 +329,8 @@ async def preview_selection(request):
     directory            = data.get("directory", "")
     seed                 = int(data.get("seed", 0))
     continuous_processing = max(1, int(data.get("continuous_processing", 1)))
-    output_mode          = bool(data.get("output_mode", False))
+    # output_mode 可能是字串（新版下拉選單）或 bool（舊版相容）
+    output_mode          = _normalize_output_mode(data.get("output_mode", MODE_COMBINATION))
     file_configs_str     = data.get("file_configs", "{}")
 
     base_dir = _resolve_base_dir(directory)

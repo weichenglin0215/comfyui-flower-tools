@@ -81,8 +81,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 widget.is_base_widget = false;
                 widget.last_count = file.count || "?";
 
-                // 設定高度 40 (35橫條 + 5間隔)
-                widget.computeSize = (w) => [220, 40];
+                // 設定高度 30 (30橫條 + 5間隔)
+                widget.computeSize = (w) => [220, 26];
 
                 widget.draw = function (ctx, node, width, y, height) {
                     const config = node.fileConfigs?.[this.name] || { status: "disabled" };
@@ -91,7 +91,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     // 繪製 35px 高的橫條，保留 5px 間隙
                     ctx.fillStyle = "#121212";
                     ctx.beginPath();
-                    ctx.roundRect(20, y, width - 40, 35, 8);
+                    ctx.roundRect(20, y, width - 40, 28, 8);
                     ctx.fill();
                     ctx.strokeStyle = "#444";
                     ctx.lineWidth = 1.5;
@@ -105,18 +105,18 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         default: sc = "#444"; st = "OFF"; break;
                     }
 
-                    ctx.fillStyle = sc; ctx.beginPath(); ctx.roundRect(25, y + 3, 80, 29, 4); ctx.fill();
+                    ctx.fillStyle = sc; ctx.beginPath(); ctx.roundRect(25, y + 3, 80, 22, 4); ctx.fill();
                     ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial"; ctx.textAlign = "center";
-                    ctx.fillText(st, 65, y + 23);
+                    ctx.fillText(st, 65, y + 20);
 
-                    ctx.textAlign = "left"; ctx.font = "20px Arial";
-                    ctx.fillText(this.name, 120, y + 23);
+                    ctx.textAlign = "left"; ctx.font = "18px Arial";
+                    ctx.fillText(this.name, 120, y + 20);
 
                     ctx.textAlign = "right";
-                    ctx.fillText(`[${this.last_count}]`, width - 35, y + 23);
+                    ctx.fillText(`[${this.last_count}]`, width - 35, y + 20);
 
                     if (status === "selected" && config.selected_line) {
-                        ctx.fillStyle = "#fff"; ctx.font = "italic 18px Arial";
+                        ctx.fillStyle = "#fff"; ctx.font = "italic 16px Arial";
                         // 多行單位只顯示第一行作為預覽，避免換行字元破壞版面
                         let pr = config.selected_line.split('\n')[0];
                         if (ctx.measureText(pr).width > width - 450) pr = pr.substring(0, 30) + "...";
@@ -318,7 +318,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         directory:             dirW?.value  || "",
                         seed:                  seedW?.value || 0,
                         continuous_processing: cpW?.value   || 1,
-                        output_mode:           omW?.value   || false,
+                        // output_mode 是下拉式字串（組合 / 循序 / 整個文字檔），Python 端會 normalize
+                        output_mode:           omW?.value   ?? "",
                         file_configs:          cfW?.value   || "{}",
                     })
                 });

@@ -298,6 +298,8 @@ ComfyUI/
 您也可以在 Prompt Selector 節點的 `directory` 欄位輸入絕對路徑來讀取其他位置的檔案。
 
 ## 📜 更新日誌 (Changelog)
+*   **2026-06-23 (v1.8.7)**:
+    *   `🌸Flower Multiline Prompt Selector` 新增讀取.md，支援一次輸出整個文字檔功能，檔案清單高度已調整以適應更小的顯示空間。
 *   **2026-06-16 (v1.8.6)**:
     *   `🌸Flower Load Text From Folder` 章節分段輸出檔名中的"第X章"往前移並加入三位數編號。
 *   **2026-06-16 (v1.8.5)**:
