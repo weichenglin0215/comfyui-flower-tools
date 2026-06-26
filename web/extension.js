@@ -56,13 +56,22 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
             // 🌸 關鍵修復：這裡我們將這由 asciiSort 排好序的清單「依序」存回 node.fileConfigs 🌸
             // Python 後端只要照著 configs.keys() 的順序解析，就絕對會和 Frontend 完全相同的順序執行。
+            // 🌸 補強：被 filter 過濾掉而未出現於 displayList 的舊 configs 仍保留，避免切換 filter 時遺失設定 🌸
             if (Object.keys(node.fileConfigs || {}).length > 0) {
                 const orderedConfigs = {};
+                const visibleNames = new Set();
                 for (const file of displayList) {
+                    visibleNames.add(file.name);
                     if (node.fileConfigs[file.name]) {
                         orderedConfigs[file.name] = node.fileConfigs[file.name];
                     } else {
                         orderedConfigs[file.name] = { status: "disabled", count: file.count || "?" };
+                    }
+                }
+                // 將不在當前顯示範圍但已存於 fileConfigs 的項目補回（保留隱藏設定）
+                for (const [name, cfg] of Object.entries(node.fileConfigs)) {
+                    if (!visibleNames.has(name)) {
+                        orderedConfigs[name] = cfg;
                     }
                 }
                 node.fileConfigs = orderedConfigs;
@@ -166,9 +175,18 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         try { this.fileConfigs = JSON.parse(cfw.value); } catch (e) { console.error("JSON Read Error"); }
                     }
 
-                    const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
+                    const dir  = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
+                    const fkw  = (this.widgets.find(w => w.name === "filter_keyword")?.value || "").trim();
+                    const nkw  = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
+                    const exA  = !!(this.widgets.find(w => w.name === "exclude_ascii_only")?.value);
                     try {
-                        const response = await api.fetchApi(`/flower-tools/list-files?directory=${encodeURIComponent(dir)}`);
+                        const qs = new URLSearchParams({
+                            directory: dir,
+                            filter_keyword: fkw,
+                            negativeKeyword: nkw,
+                            exclude_ascii_only: exA ? "true" : "false",
+                        });
+                        const response = await api.fetchApi(`/flower-tools/list-files?${qs.toString()}`);
                         if (!response.ok) {
                             console.warn("Directory not found or API error, keeping current configs.");
                             const errorMsg = `Directory [ ${dir} ] 並不存在，請檢查並重新輸入。`;
@@ -210,6 +228,33 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 btn.serialize = false;
                 btn.is_base_widget = true;
             }
+
+            // 🌸 批次設定按鈕：全部 OFF / Random / Ordered 🌸
+            // 對目前 fileConfigs 中所有檔案統一設定狀態，並同步寫回 file_configs JSON widget
+            const setAllStatus = (status) => {
+                if (!this.fileConfigs) this.fileConfigs = {};
+                for (const k of Object.keys(this.fileConfigs)) {
+                    this.fileConfigs[k] = { ...this.fileConfigs[k], status };
+                    if (status !== "selected") {
+                        delete this.fileConfigs[k].selected_line;
+                    }
+                }
+                const cfw = this.widgets.find(w => w.name === "file_configs");
+                if (cfw) cfw.value = JSON.stringify(this.fileConfigs, null, 2);
+                this.setDirtyCanvas(true);
+                this._updateResultPreview?.();
+            };
+
+            const addBatchBtn = (label, name, status) => {
+                if (this.widgets.find(w => w.name === name)) return;
+                const b = this.addWidget("button", label, null, () => setAllStatus(status));
+                b.name = name;
+                b.serialize = false;
+                b.is_base_widget = true;
+            };
+            addBatchBtn("⏹ 全部 OFF (All Disable)", "all_off_btn", "disabled");
+            addBatchBtn("🎲 全部 Random (All Random)", "all_random_btn", "random");
+            addBatchBtn("🔢 全部 Ordered (All Ordered)", "all_ordered_btn", "ordered");
 
             // 我們不再使用 reorder，因為重排序會打亂 ComfyUI Widget 陣列索引，導致讀檔時數值對錯欄位！
             return undefined;
@@ -303,6 +348,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         // 顯示含原始 /* */ 註解的文字，與節點執行後的 ui 預覽行為完全一致。
         nodeType.prototype._updateResultPreview = async function () {
             const dirW  = this.widgets.find(w => w.name === "directory");
+            const fkW   = this.widgets.find(w => w.name === "filter_keyword");
+            const nkW   = this.widgets.find(w => w.name === "negativeKeyword");
+            const exW   = this.widgets.find(w => w.name === "exclude_ascii_only");
             const seedW = this.widgets.find(w => w.name === "seed");
             const cpW   = this.widgets.find(w => w.name === "continuous_processing");
             const omW   = this.widgets.find(w => w.name === "output_mode");
@@ -316,6 +364,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         directory:             dirW?.value  || "",
+                        filter_keyword:        fkW?.value   || "",
+                        negativeKeyword:       nkW?.value   || "",
+                        exclude_ascii_only:    !!exW?.value,
                         seed:                  seedW?.value || 0,
                         continuous_processing: cpW?.value   || 1,
                         // output_mode 是下拉式字串（組合 / 循序 / 整個文字檔），Python 端會 normalize

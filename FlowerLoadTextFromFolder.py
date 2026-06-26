@@ -271,10 +271,10 @@ class FlowerLoadTextFromFolder:
                 # 1. 絕對目錄路徑
                 "directory": ("STRING", {"default": ""}),
                 # 2. 篩選關鍵字（空白＝全選）
-                "filter_keyword": ("STRING", {"default": ""}),
+                "filter_keyword": ("STRING", {"default": "", "placeholder": "'|'  OR 分隔  '&' 為 AND 分隔 範例：'A&B|C'"}),
                 # 3. 排除關鍵字：從 filter_keyword 篩選結果中進一步排除符合的檔案
                 #    支援 '&'（AND）與 '|'（OR）分隔多關鍵字
-                "negativeKeyword": ("STRING", {"default": ""}),
+                "negativeKeyword": ("STRING", {"default": "", "placeholder": "'|'  OR 分隔  '&' 為 AND 分隔 範例：'A&B|C'"}),
                 # 4. seed：指定選取第幾個檔案或分段
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 # 5. 生成後控制，與 seed 綁定

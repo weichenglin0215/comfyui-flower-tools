@@ -90,8 +90,51 @@ def _resolve_base_dir(directory):
 # 🌸 支援的文字檔副檔名（.txt 與 .md 皆可讀取）🌸
 SUPPORTED_EXTS = (".txt", ".md")
 
+# 🌸 filter_keyword / negativeKeyword 共用 placeholder 提示文字 🌸
+KEYWORD_PLACEHOLDER = "'|'  OR 分隔  '&' 為 AND 分隔 範例：'A&B|C'"
 
-def _build_file_list(base_dir, configs):
+
+def _match_keyword_pattern(name: str, pattern: str) -> bool:
+    """
+    關鍵字模式比對，支援多關鍵字運算：
+      '|' 為 OR 分隔（任一群組符合即 True）
+      '&' 為 AND 分隔（群組內所有關鍵字都必須符合）
+      範例：'A&B|C' → (A AND B) OR C
+      空白模式回傳 True（不篩選）
+    """
+    pattern = (pattern or "").strip()
+    if not pattern:
+        return True
+    name_lower = name.lower()
+    for group in pattern.split('|'):
+        group = group.strip()
+        if not group:
+            continue
+        and_keywords = [kw.strip().lower() for kw in group.split('&') if kw.strip()]
+        if and_keywords and all(kw in name_lower for kw in and_keywords):
+            return True
+    return False
+
+
+def _is_ascii_only_name(filename: str) -> bool:
+    """檢查檔名（不含副檔名）是否全部為 ASCII 字元（即純英文/數字/符號）。"""
+    name = os.path.splitext(filename)[0]
+    return bool(name) and all(ord(c) < 128 for c in name)
+
+
+def _apply_filters(files, filter_keyword, negative_keyword, exclude_ascii_only):
+    """依序套用：篩選關鍵字、排除關鍵字、排除純英文檔名。"""
+    result = list(files)
+    if filter_keyword and filter_keyword.strip():
+        result = [f for f in result if _match_keyword_pattern(f, filter_keyword)]
+    if negative_keyword and negative_keyword.strip():
+        result = [f for f in result if not _match_keyword_pattern(f, negative_keyword)]
+    if exclude_ascii_only:
+        result = [f for f in result if not _is_ascii_only_name(f)]
+    return result
+
+
+def _build_file_list(base_dir, configs, filter_keyword="", negative_keyword="", exclude_ascii_only=False):
     """
     依照 configs 中 key 的順序建立有序的檔案清單，
     configs 中未包含的剩餘文字檔（.txt / .md）以 ASCII 優先排序補在後面
@@ -109,7 +152,9 @@ def _build_file_list(base_dir, configs):
 
     remaining = [f for f in os.listdir(base_dir) if f.endswith(SUPPORTED_EXTS) and f not in configs]
     remaining.sort(key=ascii_first_key)
-    return ordered_files + remaining
+    full_list = ordered_files + remaining
+    # 🌸 套用 filter_keyword / negativeKeyword / 排除純英文檔名 🌸
+    return _apply_filters(full_list, filter_keyword, negative_keyword, exclude_ascii_only)
 
 
 # 🌸 輸出模式常數 🌸
@@ -215,16 +260,22 @@ class FlowerMultilinePromptSelector:
     def INPUT_TYPES(s):
         return {
             "required": {
-                # Index 0: directory
+                # 目錄路徑
                 "directory": ("STRING", {"default": ""}),
-                # Index 1 & 2: seed & continuous_processing
+                # 篩選關鍵字（顯示 placeholder 提示文字）
+                "filter_keyword": ("STRING", {"default": "", "placeholder": KEYWORD_PLACEHOLDER}),
+                # 排除關鍵字
+                "negativeKeyword": ("STRING", {"default": "", "placeholder": KEYWORD_PLACEHOLDER}),
+                # 排除純英文檔名（檔名（不含副檔名）全為 ASCII 時排除）
+                "exclude_ascii_only": ("BOOLEAN", {"default": False, "label_on": "排除純英文檔名", "label_off": "包含純英文檔名"}),
+                # seed & continuous_processing
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "continuous_processing": ("INT", {"default": 1, "min": 1, "max": 9999999}),
-                # Index 3: output_mode（下拉式選單：組合 / 循序 / 整個文字檔）
+                # output_mode（下拉式選單：組合 / 循序 / 整個文字檔）
                 "output_mode": (OUTPUT_MODE_OPTIONS, {"default": MODE_COMBINATION}),
-                # Index 4: remove_comments（預設勾選，輸出時刪除 /**/ 註解）
+                # remove_comments（預設勾選，輸出時刪除 /**/ 註解）
                 "remove_comments": ("BOOLEAN", {"default": True, "label_on": "輸出時刪除/**/註解", "label_off": "輸出保留/**/註解"}),
-                # Index 5: file_configs
+                # file_configs（JSON 字串，儲存各檔案的 status / selected_line / count）
                 "file_configs": ("STRING", {"default": "{}", "multiline": True}),
             },
         }
@@ -235,7 +286,9 @@ class FlowerMultilinePromptSelector:
     CATEGORY = "flower-tools"
     OUTPUT_NODE = True
 
-    def select_multiline_prompt(self, directory, seed, continuous_processing, output_mode, remove_comments, file_configs="{}"):
+    def select_multiline_prompt(self, directory, filter_keyword, negativeKeyword,
+                                 exclude_ascii_only, seed, continuous_processing,
+                                 output_mode, remove_comments, file_configs="{}"):
         base_dir = _resolve_base_dir(directory)
 
         if not os.path.exists(base_dir):
@@ -247,7 +300,7 @@ class FlowerMultilinePromptSelector:
             configs = {}
 
         try:
-            files = _build_file_list(base_dir, configs)
+            files = _build_file_list(base_dir, configs, filter_keyword, negativeKeyword, exclude_ascii_only)
         except Exception as e:
             return {"ui": {"text": [str(e)]}, "result": ("Error",)}
 
@@ -265,6 +318,9 @@ class FlowerMultilinePromptSelector:
 @PromptServer.instance.routes.get("/flower-tools/list-files")
 async def list_files(request):
     directory = request.query.get("directory", "").strip()
+    filter_keyword = request.query.get("filter_keyword", "")
+    negative_keyword = request.query.get("negativeKeyword", "")
+    exclude_ascii_only = request.query.get("exclude_ascii_only", "false").lower() in ("1", "true", "yes")
     base_dir = _resolve_base_dir(directory)
 
     if not os.path.isdir(base_dir):
@@ -279,6 +335,8 @@ async def list_files(request):
     files = []
     try:
         f_list = [f for f in os.listdir(base_dir) if f.endswith(SUPPORTED_EXTS)]
+        # 🌸 套用 filter_keyword / negativeKeyword / 排除純英文檔名 🌸
+        f_list = _apply_filters(f_list, filter_keyword, negative_keyword, exclude_ascii_only)
         f_list.sort(key=sort_key)
         for f in f_list:
             path = os.path.join(base_dir, f)
@@ -327,6 +385,9 @@ async def preview_selection(request):
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
     directory            = data.get("directory", "")
+    filter_keyword       = data.get("filter_keyword", "")
+    negative_keyword     = data.get("negativeKeyword", "")
+    exclude_ascii_only   = bool(data.get("exclude_ascii_only", False))
     seed                 = int(data.get("seed", 0))
     continuous_processing = max(1, int(data.get("continuous_processing", 1)))
     # output_mode 可能是字串（新版下拉選單）或 bool（舊版相容）
@@ -343,7 +404,7 @@ async def preview_selection(request):
         configs = {}
 
     try:
-        files = _build_file_list(base_dir, configs)
+        files = _build_file_list(base_dir, configs, filter_keyword, negative_keyword, exclude_ascii_only)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
