@@ -305,6 +305,10 @@ ComfyUI/
 您也可以在 Prompt Selector 節點的 `directory` 欄位輸入絕對路徑來讀取其他位置的檔案。
 
 ## 📜 更新日誌 (Changelog)
+*   **2026-08-05 (V1.11.0)**:
+    *   `🌸Flower Audio Merger (音檔合併器)` 
+    - 修正"章"數判斷錯誤。
+
 *   **2026-06-26 (V1.10.0)**:
     *   `🌸Flower Multiline Prompt Selector` 
     - 新增  filter_keyword 跟 negativeKeyword  功能完全比照 🌸Flower Load Text From Folder

@@ -69,6 +69,38 @@ _CHAPTER_LABEL_RE = re.compile(r'第[一二三四五六七八九十百千零〇�
 # 中文數字列表（用於章節標籤排序比對）
 _CN_DIGITS = "一二三四五六七八九十百千零〇兩"
 
+_CN_DIGIT_MAP = {'零': 0, '〇': 0, '一': 1, '二': 2, '兩': 2, '三': 3, '四': 4,
+                  '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+_CN_UNIT_MAP = {'十': 10, '百': 100, '千': 1000}
+
+
+def _cn_to_int(s: str):
+    """將中文數字字串（如「七」「十二」「一百零三」）轉為 int；解析失敗回傳 None。"""
+    if not s:
+        return None
+    if all(c in _CN_DIGIT_MAP for c in s):
+        # 純個位數字串（如「一二三」不常見，通常單字），逐字取值；單字直接回傳
+        if len(s) == 1:
+            return _CN_DIGIT_MAP[s]
+    total = 0
+    section = 0
+    num = 0
+    has_unit = False
+    for c in s:
+        if c in _CN_DIGIT_MAP:
+            num = _CN_DIGIT_MAP[c]
+        elif c in _CN_UNIT_MAP:
+            unit = _CN_UNIT_MAP[c]
+            section += (num if num else 1) * unit
+            num = 0
+            has_unit = True
+        else:
+            return None
+    total = section + num
+    if not has_unit and total == 0 and s not in ('零', '〇'):
+        return None
+    return total
+
 
 def _extract_chapter_label(filename: str) -> str:
     """從音檔檔名中提取章節標籤（如「第一章」）；找不到則回傳空字串。"""
@@ -292,8 +324,12 @@ class FlowerAudioMerge:
             )
             if re.fullmatch(r'\d+', inner_hf):
                 return (int(inner_hf), label)
-            # 中文數字：用字串順序粗略排序
-            return (0, label)
+            # 中文數字：轉換為實際數值排序
+            cn_val = _cn_to_int(inner_hf)
+            if cn_val is not None:
+                return (cn_val, label)
+            # 無法解析時退回字串排序，並排在最後避免影響已知章節順序
+            return (999998, label)
 
         sorted_labels = sorted([l for l in order if l], key=_label_sort_key)
         # 空標籤（無章節）放最後
