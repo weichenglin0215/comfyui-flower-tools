@@ -3,6 +3,10 @@
 FlowerAudioMerge - 合併多個音訊檔案為單一輸出
 支援 WAV、MP3、FLAC 輸入，統一重新取樣至 48000 Hz 後串接，
 輸出 ComfyUI 標準 AUDIO 格式（waveform tensor + sample_rate）。
+
+可選功能「消除長靜音」（remove_long_silence，預設開啟）：
+載入每個音檔後、串接之前，先刪除音檔內持續過久的靜音
+（通常是 AI 產生語音時遺留的錯誤），演算法與 FlowerCutSilence 節點相同。
 """
 
 import os
@@ -24,8 +28,10 @@ _AUDIO_FORMATS = {
     "FLAC": [".flac"],
 }
 
-# torch 是 ComfyUI 必備依賴，一定存在
+# torch、numpy 是 ComfyUI 必備依賴，一定存在
+import numpy as np
 import torch
+import torch.nn.functional as F
 
 # torchaudio 在大多數有音訊功能的 ComfyUI 環境中已安裝
 # 若未安裝，節點會提示使用者透過 Install 按鈕安裝
@@ -61,6 +67,147 @@ def _match_keyword_pattern(name: str, pattern: str) -> bool:
 def _empty_audio():
     """產生空白 ComfyUI AUDIO 物件，用於錯誤情況下的安全回傳。"""
     return {"waveform": torch.zeros(1, 2, 1), "sample_rate": 48000}
+
+
+def _f32_pcm(wav):
+    """將整數 PCM tensor 轉為 float32（-1 ~ 1）；本來就是浮點數則只統一為 float32。"""
+    if wav.dtype.is_floating_point:
+        return wav.float()
+    if wav.dtype == torch.int16:
+        return wav.float() / (2 ** 15)
+    if wav.dtype == torch.int32:
+        return wav.float() / (2 ** 31)
+    raise ValueError(f"不支援的音訊資料型別：{wav.dtype}")
+
+
+def _load_audio_file(path):
+    """
+    載入音檔，回傳 (waveform [聲道數, 取樣點數] float32, sample_rate)。
+
+    依序嘗試三種讀取方式，前一種失敗才換下一種：
+      1. torchaudio.load：原有做法。但新版 torchaudio（>= 2.9）的 load 必須另外安裝
+         torchcodec，沒裝時所有檔案都會載入失敗，因此必須有備援。
+      2. soundfile：WAV / FLAC（新版 libsndfile 也支援 MP3）。
+      3. PyAV（av）：內建 FFmpeg 函式庫，WAV / MP3 / FLAC 都能讀，不需要另外安裝 ffmpeg。
+         ComfyUI 核心的 LoadAudio 節點也是用 av 讀音檔，所以一定存在。
+    三種都失敗時，丟出的例外訊息會包含各自的失敗原因，方便判斷問題。
+    """
+    errors = []
+
+    # 1. torchaudio
+    if _HAS_TORCHAUDIO:
+        try:
+            return torchaudio.load(path)
+        except Exception as e:
+            errors.append(f"torchaudio：{e}")
+
+    # 2. soundfile
+    try:
+        import soundfile as sf
+        data, sr = sf.read(path, dtype="float32", always_2d=True)  # shape = [取樣點, 聲道]
+        return torch.from_numpy(data.T.copy()), sr                  # 轉成 [聲道, 取樣點]
+    except Exception as e:
+        errors.append(f"soundfile：{e}")
+
+    # 3. PyAV
+    try:
+        import av
+        with av.open(path) as container:
+            if not container.streams.audio:
+                raise ValueError("檔案中找不到音訊串流")
+            stream = container.streams.audio[0]
+            sr = stream.codec_context.sample_rate
+            # 不同版本的 PyAV 取得聲道數的屬性不同，依序嘗試
+            n_channels = getattr(getattr(stream.codec_context, "layout", None), "nb_channels", None) \
+                or getattr(stream, "channels", None) or 1
+            frames = []
+            for frame in container.decode(stream):
+                buf = torch.from_numpy(frame.to_ndarray())
+                # packed（交錯）格式會是 [1, 點數×聲道]，需轉成 [聲道, 點數]；planar 格式已是 [聲道, 點數]
+                if buf.shape[0] != n_channels:
+                    buf = buf.reshape(-1, n_channels).t()
+                frames.append(buf)
+            if not frames:
+                raise ValueError("沒有解出任何音訊資料")
+            return _f32_pcm(torch.cat(frames, dim=1)), sr
+    except Exception as e:
+        errors.append(f"av：{e}")
+
+    raise RuntimeError("；".join(errors))
+
+
+# 偵測靜音用的幀長度（秒）：10 毫秒，兼顧解析度與速度
+_FRAME_SEC = 0.01
+
+
+def _cut_silence_single(waveform, sample_rate, threshold_db, min_silence_sec, keep_sec):
+    """
+    對單一音訊（shape = [聲道數, 取樣點數]）刪除過長的靜音。
+
+    注意：這是 FlowerCutSilence.py 中同名函式的複本（專案規範：每個節點檔案各自獨立），
+    修改演算法時兩邊必須同步。
+
+    做法：
+      1. 以 10 毫秒為一幀，取每幀所有聲道的「峰值」振幅，低於 threshold_db（dBFS）視為靜音幀。
+      2. 連續靜音長度 >= min_silence_sec 的區段才會處理。
+      3. 保留規則（目的：不切到有效內容的漸強／漸弱）：
+           前後都有內容 → 保留靜音「前面」與「後面」各 keep_sec
+           只有前面有內容（靜音一路到檔尾）→ 只保留靜音「前面」keep_sec
+           只有後面有內容（靜音從檔首開始）→ 只保留靜音「後面」keep_sec
+
+    回傳 (裁切後 waveform, 被裁切的靜音區段數)。
+    """
+    n = waveform.shape[-1]
+    if n == 0:
+        return waveform, 0
+
+    # ── 1. 計算每幀峰值（所有聲道取最大絕對值）──────────────────────────────
+    # 逐聲道比較以避免一次產生整份 abs 複本，長音檔較省記憶體
+    amp = waveform[0].abs()
+    for c in range(1, waveform.shape[0]):
+        amp = torch.maximum(amp, waveform[c].abs())
+
+    frame = max(1, int(round(sample_rate * _FRAME_SEC)))
+    # max_pool1d 搭配 ceil_mode：最後一個不足一幀的尾巴也會被計入
+    frame_peak = F.max_pool1d(amp.view(1, 1, -1), kernel_size=frame, stride=frame, ceil_mode=True)
+    frame_peak = frame_peak.view(-1).cpu().numpy()
+
+    # ── 2. 找出靜音幀，並整理成連續的靜音區段 [start, end)（單位：幀）─────────
+    threshold_amp = 10.0 ** (threshold_db / 20.0)  # dBFS 轉線性振幅
+    silent = (frame_peak < threshold_amp).astype(np.int8)
+    edges = np.diff(np.concatenate(([0], silent, [0])))
+    run_starts = np.flatnonzero(edges == 1)
+    run_ends = np.flatnonzero(edges == -1)
+
+    min_samples = int(round(min_silence_sec * sample_rate))
+    keep_samples = int(round(keep_sec * sample_rate))
+
+    # ── 3. 依條件決定要刪除的取樣點範圍 ─────────────────────────────────────
+    keep_mask = torch.ones(n, dtype=torch.bool)
+    cut_count = 0
+    for fs, fe in zip(run_starts, run_ends):
+        start = int(fs) * frame
+        end = min(int(fe) * frame, n)
+        if end - start < min_samples:
+            continue  # 靜音不夠久，不處理
+
+        left_keep = 0 if start == 0 else keep_samples      # 前面沒有內容就不必保留前面
+        right_keep = 0 if end >= n else keep_samples       # 後面沒有內容就不必保留後面
+
+        cut_start = start + left_keep
+        cut_end = end - right_keep
+        if cut_end > cut_start:
+            keep_mask[cut_start:cut_end] = False
+            cut_count += 1
+
+    # 整段音訊都是靜音時，全部刪除會產生長度 0 的音訊而導致下游節點出錯，改為原樣輸出
+    if not keep_mask.any():
+        print("[FlowerAudioMerge] 警告：整段音訊皆低於臨界值，為避免輸出空音訊，保持原樣")
+        return waveform, 0
+
+    if cut_count == 0:
+        return waveform, 0
+    return waveform[:, keep_mask], cut_count
 
 
 # 章節標籤正規式：從音檔檔名中抓取「第X章」標籤
@@ -173,6 +320,30 @@ class FlowerAudioMerge:
                 # 9. 自動分段的檔案數量：「強制自動依檔案數量分段輸出」模式下每批的檔案數
                 "autoSegmentCount": ("INT", {"default": 4, "min": 1, "max": 9999}),
             },
+            # 以下四個欄位放在 optional：前端會排在所有 required 欄位之後，
+            # 舊工作流程（沒有這四個值）載入時不會因欄位位置位移而錯亂，並自動套用預設值
+            "optional": {
+                # 10. 消除長靜音：載入每個音檔後、串接之前，先刪除音檔內持續過久的靜音
+                #     （通常是 AI 產生語音時遺留的錯誤）。預設勾選。
+                "remove_long_silence": ("BOOLEAN", {
+                    "default": True, "label_on": "消除長靜音", "label_off": "不消除",
+                    "tooltip": "勾選時，每個音檔載入後會先刪除過長的靜音，之後才進行合併。",
+                }),
+                # 11~13. 以下三個參數與 🌸Flower Cut Silence 節點完全相同
+                "threshold_db": ("FLOAT", {
+                    "default": -20.0, "min": -100.0, "max": 0.0, "step": 0.5,
+                    "tooltip": "臨界值(dB)：音量低於此值視為靜音，0 dB 為滿刻度。",
+                }),
+                "min_silence_sec": ("FLOAT", {
+                    "default": 2.0, "min": 0.1, "max": 600.0, "step": 0.1,
+                    "tooltip": "持續時間(秒)：靜音持續超過此長度才會被刪除。",
+                }),
+                "keep_sec": ("FLOAT", {
+                    "default": 0.3, "min": 0.0, "max": 60.0, "step": 0.05,
+                    "tooltip": "截斷前後的保留秒數：前後都有內容時，被刪除靜音的前面與後面各保留這麼多秒；"
+                               "只有一側有內容時，只保留靠近內容那一側。",
+                }),
+            },
         }
 
     RETURN_TYPES = ("AUDIO", "INT", "FLOAT", "STRING")
@@ -182,7 +353,8 @@ class FlowerAudioMerge:
     OUTPUT_NODE = True
 
     def merge_audio(self, directory, filterKeyword, negativeKeyword, inputFormatSelector,
-                    appendOutputName, fileConfigs, autoOutputMode, seed, autoSegmentCount):
+                    appendOutputName, fileConfigs, autoOutputMode, seed, autoSegmentCount,
+                    remove_long_silence=True, threshold_db=-20.0, min_silence_sec=2.0, keep_sec=0.3):
         """
         主執行方法：載入已勾選（或依 seed 自動選取）的音檔，統一重新取樣後串接，
         回傳 ComfyUI AUDIO 格式。
@@ -194,11 +366,13 @@ class FlowerAudioMerge:
 
         輸出為格式無關的 float32 tensor，下游 Save Audio 節點負責格式轉換：
           - 取樣率：48000 Hz
-          - 聲道數：立體聲（2 ch），單聲道複製為雙聲道
+          - 聲道數：依來源自動決定。全部音檔都是單聲道 → 單聲道（1 ch）；
+                    只要有任何一個雙聲道 → 雙聲道（2 ch），單聲道檔案複製為雙聲道；
+                    超過兩聲道的檔案（如 5.1）只取前兩聲道
           - 精度：float32
 
         回傳：
-          audio    - ComfyUI AUDIO {waveform: Tensor(1, 2, N), sample_rate: 48000}
+          audio    - ComfyUI AUDIO {waveform: Tensor(1, 1 或 2, N), sample_rate: 48000}
           count    - 實際成功載入並合併的音檔數量
           length   - 合併後總時長（秒，小數點以下兩位）
           fileName - 第一個被選取音檔的檔名（不含路徑與副檔名）+ appendOutputName
@@ -214,11 +388,14 @@ class FlowerAudioMerge:
             err = f"錯誤：目錄不存在 [{base_dir}]"
             return {"ui": {"text": [err]}, "result": (_empty_audio(), 0, 0.0, "")}
 
+        # 消除長靜音參數：未勾選時為 None，_do_merge 載入每個音檔時據此決定是否先裁切
+        silence_opts = (threshold_db, min_silence_sec, keep_sec) if remove_long_silence else None
+
         # ── 強制自動輸出模式 ──────────────────────────────────────────────────────
         if autoOutputMode != "無強制自動輸出":
             return self._merge_auto(
                 base_dir, filterKeyword, negativeKeyword, inputFormatSelector,
-                appendOutputName, autoOutputMode, seed, autoSegmentCount
+                appendOutputName, autoOutputMode, seed, autoSegmentCount, silence_opts
             )
 
         # ── 原有邏輯（無強制自動輸出）─────────────────────────────────────────────
@@ -244,7 +421,7 @@ class FlowerAudioMerge:
             msg = "尚未勾選任何音檔。請先點擊 Refresh 載入清單，再勾選要合併的音檔。"
             return {"ui": {"text": [msg]}, "result": (_empty_audio(), 0, 0.0, "")}
 
-        return self._do_merge(base_dir, enabled_files, appendOutputName)
+        return self._do_merge(base_dir, enabled_files, appendOutputName, silence_opts)
 
     def _get_filtered_files(self, base_dir, filterKeyword, negativeKeyword, inputFormatSelector):
         """
@@ -266,7 +443,7 @@ class FlowerAudioMerge:
         return files
 
     def _merge_auto(self, base_dir, filterKeyword, negativeKeyword, inputFormatSelector,
-                    appendOutputName, autoOutputMode, seed, autoSegmentCount):
+                    appendOutputName, autoOutputMode, seed, autoSegmentCount, silence_opts=None):
         """強制自動輸出模式的核心邏輯。seed 直接作為批次索引。"""
         all_files = self._get_filtered_files(base_dir, filterKeyword, negativeKeyword, inputFormatSelector)
 
@@ -288,7 +465,7 @@ class FlowerAudioMerge:
 
         # 章節模式下，附加章節標籤於 appendOutputName 之前
         effective_append = (f"-{chapter_label}" if chapter_label else "") + appendOutputName
-        return self._do_merge(base_dir, enabled_files, effective_append)
+        return self._do_merge(base_dir, enabled_files, effective_append, silence_opts)
 
     def _select_by_chapter(self, all_files, process_idx):
         """
@@ -363,12 +540,16 @@ class FlowerAudioMerge:
               f"選取索引 {start}~{end-1}，共 {len(selected)} 個檔案")
         return selected
 
-    def _do_merge(self, base_dir, enabled_files, appendOutputName):
+    def _do_merge(self, base_dir, enabled_files, appendOutputName, silence_opts=None):
         """
         載入指定音檔清單，統一重新取樣後串接，回傳 ComfyUI AUDIO 格式。
+
+        silence_opts 為 (threshold_db, min_silence_sec, keep_sec) 或 None：
+        不是 None 時，每個音檔載入並統一格式後，會先刪除長靜音，之後才進行串接。
         """
         TARGET_SR = 48000  # 統一取樣率：48000 Hz
         segments = []
+        load_errors = []   # 記錄載入失敗檔案的原因，全部失敗時顯示在節點的預覽欄
 
         for filename in enabled_files:
             full_path = os.path.join(base_dir, filename)
@@ -376,8 +557,9 @@ class FlowerAudioMerge:
                 print(f"[FlowerAudioMerge] ⚠ 檔案不存在，跳過：{filename}")
                 continue
             try:
-                # 載入音訊（torchaudio 支援 WAV、FLAC；MP3 需要 ffmpeg backend）
-                waveform, sr = torchaudio.load(full_path)
+                # 載入音訊：torchaudio 失敗（例如新版需要 torchcodec 卻沒安裝）時，
+                # 自動改用 soundfile 或 PyAV 讀取，見 _load_audio_file
+                waveform, sr = _load_audio_file(full_path)
 
                 # ── 振幅安全防護 ──────────────────────────────────────────────────
                 # torchaudio 載入不同格式的音訊時，正規化行為可能不同：
@@ -394,23 +576,47 @@ class FlowerAudioMerge:
                 if sr != TARGET_SR:
                     waveform = torchaudio.functional.resample(waveform, sr, TARGET_SR)
 
-                # 統一聲道數為立體聲（2 聲道）
-                if waveform.shape[0] == 1:
-                    # 單聲道 → 複製為雙聲道
-                    waveform = waveform.repeat(2, 1)
-                elif waveform.shape[0] > 2:
-                    # 多聲道（如 5.1）→ 只取前兩聲道
+                # 多聲道（如 5.1）→ 只取前兩聲道；單聲道此時先維持原樣，
+                # 等全部音檔載入後再依整批來源決定輸出為單聲道或雙聲道（見下方串接前的處理）。
+                # 這裡不能先複製成雙聲道：全部都是單聲道時要保持單聲道輸出。
+                if waveform.shape[0] > 2:
                     waveform = waveform[:2, :]
+
+                # ── 消除長靜音：在串接之前，先對這個音檔單獨處理 ──────────────────
+                # 長靜音通常是 AI 產生語音時遺留的錯誤；必須在串接前處理，
+                # 才不會把相鄰音檔的首尾靜音誤判為同一段而影響保留規則
+                if silence_opts is not None:
+                    before_sec = waveform.shape[1] / TARGET_SR
+                    waveform, cut_count = _cut_silence_single(waveform, TARGET_SR, *silence_opts)
+                    if cut_count:
+                        after_sec = waveform.shape[1] / TARGET_SR
+                        print(f"[FlowerAudioMerge]   已刪除 {cut_count} 段長靜音"
+                              f"（{before_sec:.2f}s → {after_sec:.2f}s）")
 
                 segments.append(waveform)
                 dur = waveform.shape[1] / TARGET_SR
                 print(f"[FlowerAudioMerge] ✓ 已載入：{filename}（{dur:.2f}s）")
             except Exception as e:
                 print(f"[FlowerAudioMerge] ✗ 載入失敗 {filename}：{e}")
+                load_errors.append(f"{filename}：{e}")
 
         if not segments:
-            err = "錯誤：所有選取的音檔均無法載入。MP3 格式需要 ffmpeg，請確認是否已安裝。"
+            if load_errors:
+                # 直接顯示第一個檔案的真正失敗原因，避免誤導使用者往錯誤方向排查
+                err = ("錯誤：所有選取的音檔均無法載入。\n"
+                       f"第一個失敗原因 → {load_errors[0]}\n"
+                       "（各檔案的詳細原因請查看 ComfyUI 後台輸出視窗）")
+            else:
+                err = "錯誤：所選音檔都不存在。請先點擊 Refresh 重新整理清單。"
             return {"ui": {"text": [err]}, "result": (_empty_audio(), 0, 0.0, "")}
+
+        # ── 依來源音檔自動決定輸出聲道數 ────────────────────────────────────────
+        # 規則：所有音檔都是單聲道 → 輸出單聲道（1 ch）；只要有任何一個是雙聲道 → 輸出雙聲道（2 ch），
+        # 此時單聲道的音檔複製為雙聲道（左右相同），避免串接時聲道數不一致而失敗，也不會遺失雙聲道的左右差異。
+        # 靜音刪除是看「各聲道的峰值」，單聲道與複製後的雙聲道結果相同，所以先刪靜音再統一聲道不影響結果。
+        out_channels = max(seg.shape[0] for seg in segments)
+        segments = [seg.repeat(out_channels, 1) if seg.shape[0] != out_channels else seg
+                    for seg in segments]
 
         # 沿時間軸（dim=1）串接所有音訊片段
         merged = torch.cat(segments, dim=1)
@@ -418,8 +624,9 @@ class FlowerAudioMerge:
         # 計算統計資訊
         count = len(segments)
         length_sec = round(merged.shape[1] / TARGET_SR, 2)
+        print(f"[FlowerAudioMerge] 輸出聲道數：{out_channels}（{'單聲道' if out_channels == 1 else '雙聲道'}）")
 
-        # 組成 ComfyUI AUDIO 格式：shape = (batch=1, channels=2, samples=N)
+        # 組成 ComfyUI AUDIO 格式：shape = (batch=1, channels=1 或 2, samples=N)
         audio_out = {
             "waveform": merged.unsqueeze(0),
             "sample_rate": TARGET_SR,

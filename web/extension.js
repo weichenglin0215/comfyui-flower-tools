@@ -175,10 +175,10 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         try { this.fileConfigs = JSON.parse(cfw.value); } catch (e) { console.error("JSON Read Error"); }
                     }
 
-                    const dir  = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
-                    const fkw  = (this.widgets.find(w => w.name === "filter_keyword")?.value || "").trim();
-                    const nkw  = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
-                    const exA  = !!(this.widgets.find(w => w.name === "exclude_ascii_only")?.value);
+                    const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
+                    const fkw = (this.widgets.find(w => w.name === "filter_keyword")?.value || "").trim();
+                    const nkw = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
+                    const exA = !!(this.widgets.find(w => w.name === "exclude_ascii_only")?.value);
                     try {
                         const qs = new URLSearchParams({
                             directory: dir,
@@ -347,15 +347,15 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         // 🌸 向後端呼叫 preview-selection 端點，取得目前設定的輸出預覽並更新 result_dialog 🌸
         // 顯示含原始 /* */ 註解的文字，與節點執行後的 ui 預覽行為完全一致。
         nodeType.prototype._updateResultPreview = async function () {
-            const dirW  = this.widgets.find(w => w.name === "directory");
-            const fkW   = this.widgets.find(w => w.name === "filter_keyword");
-            const nkW   = this.widgets.find(w => w.name === "negativeKeyword");
-            const exW   = this.widgets.find(w => w.name === "exclude_ascii_only");
+            const dirW = this.widgets.find(w => w.name === "directory");
+            const fkW = this.widgets.find(w => w.name === "filter_keyword");
+            const nkW = this.widgets.find(w => w.name === "negativeKeyword");
+            const exW = this.widgets.find(w => w.name === "exclude_ascii_only");
             const seedW = this.widgets.find(w => w.name === "seed");
-            const cpW   = this.widgets.find(w => w.name === "continuous_processing");
-            const omW   = this.widgets.find(w => w.name === "output_mode");
-            const cfW   = this.widgets.find(w => w.name === "file_configs");
-            const resW  = this.widgets.find(w => w.name === "result_dialog");
+            const cpW = this.widgets.find(w => w.name === "continuous_processing");
+            const omW = this.widgets.find(w => w.name === "output_mode");
+            const cfW = this.widgets.find(w => w.name === "file_configs");
+            const resW = this.widgets.find(w => w.name === "result_dialog");
             if (!resW) return;
 
             try {
@@ -363,15 +363,15 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        directory:             dirW?.value  || "",
-                        filter_keyword:        fkW?.value   || "",
-                        negativeKeyword:       nkW?.value   || "",
-                        exclude_ascii_only:    !!exW?.value,
-                        seed:                  seedW?.value || 0,
-                        continuous_processing: cpW?.value   || 1,
+                        directory: dirW?.value || "",
+                        filter_keyword: fkW?.value || "",
+                        negativeKeyword: nkW?.value || "",
+                        exclude_ascii_only: !!exW?.value,
+                        seed: seedW?.value || 0,
+                        continuous_processing: cpW?.value || 1,
                         // output_mode 是下拉式字串（組合 / 循序 / 整個文字檔），Python 端會 normalize
-                        output_mode:           omW?.value   ?? "",
-                        file_configs:          cfW?.value   || "{}",
+                        output_mode: omW?.value ?? "",
+                        file_configs: cfW?.value || "{}",
                     })
                 });
                 if (!resp.ok) return;
@@ -578,15 +578,15 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     const fl = this.widgets.find(w => w.name === "file_list_display");
 
                     const params = new URLSearchParams({
-                        directory:              wv("directory", "").trim(),
-                        filter_keyword:         wv("filter_keyword", "").trim(),
-                        negativeKeyword:        wv("negativeKeyword", "").trim(),
-                        seed:                   wv("seed", "0"),
-                        continuous_processing:  wv("continuous_processing", "1"),
-                        sort_mode:              wv("sort_mode", "字母排序(Alphabetical)"),
-                        max_chars_per_segment:  wv("max_chars_per_segment", "-1"),
-                        split_symbols:          wv("split_symbols", ",.?!;:，。？！；："),
-                        split_by_chapter:       wv("split_by_chapter", "根據章編號分章輸出(第一章)"),
+                        directory: wv("directory", "").trim(),
+                        filter_keyword: wv("filter_keyword", "").trim(),
+                        negativeKeyword: wv("negativeKeyword", "").trim(),
+                        seed: wv("seed", "0"),
+                        continuous_processing: wv("continuous_processing", "1"),
+                        sort_mode: wv("sort_mode", "字母排序(Alphabetical)"),
+                        max_chars_per_segment: wv("max_chars_per_segment", "100"),
+                        split_symbols: wv("split_symbols", ",.?!;:，。？！；："),
+                        split_by_chapter: wv("split_by_chapter", "根據章編號分章輸出(第一章)"),
                         chars_per_auto_chapter: wv("chars_per_auto_chapter", "4000"),
                     });
 
@@ -762,6 +762,41 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             }
         };
 
+        // ── Refresh 後重新調整高度（一次性，不攔截 onResize / computeSize）──────
+        // 問題：目錄曾有數百個音檔時，節點高度會被撐得很高；之後 Refresh 成只有 10 個檔案，
+        //      LiteGraph 不會自動縮小節點，多出來的空間會全部分給可伸縮的多行文字框
+        //      （fileConfigs 與 result_dialog），導致這兩個欄位被拉得非常長。
+        // 做法：
+        //   1. 以 widget.options.getMinHeight / getMaxHeight 設定文字框高度範圍：
+        //      下限依內容行數決定（至少 3 行），上限固定 10 行（超出內容以捲軸瀏覽）。
+        //      這兩個函式由前端的 DOM widget 排版邏輯讀取，不是自訂 widget.computeSize。
+        //   2. 再呼叫一次 node.computeSize() 取得剛好容納所有 widget 的高度，並縮放節點。
+        const MIN_TEXT_ROWS = 3;
+        const MAX_TEXT_ROWS = 10;
+        const _fitTextWidgetHeights = (node) => {
+            if (!node.widgets) return;
+            for (const name of ["fileConfigs", "result_dialog"]) {
+                const w = node.widgets.find(x => x.name === name);
+                if (!w || !w.options) continue;
+
+                // 每行像素高度：優先取 textarea 的 line-height，"normal" 時以字級 × 1.3 估算
+                const el = w.element || w.inputEl;
+                const cs = el ? getComputedStyle(el) : null;
+                const lineH = (cs && (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.3)) || 13;
+                const rowsToPx = (rows) => Math.ceil(rows * lineH + 12); // +12 為 padding 與邊界
+
+                // 依目前內容行數決定高度，限制在 3 ~ 10 行
+                const lines = String(w.value ?? "").split("\n").length;
+                const rows = Math.min(MAX_TEXT_ROWS, Math.max(MIN_TEXT_ROWS, lines));
+                w.options.getMinHeight = () => rowsToPx(rows);
+                w.options.getMaxHeight = () => rowsToPx(MAX_TEXT_ROWS);
+            }
+
+            // 一次性縮放節點高度（寬度維持不變）
+            node.setSize([node.size[0], node.computeSize()[1]]);
+            node.setDirtyCanvas(true, true);
+        };
+
         // ── onNodeCreated：建立 JS 動態 widget ──────────────────────────────────
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -805,7 +840,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
                     const dir = (this.widgets.find(w => w.name === "directory")?.value || "").trim();
                     const fmt = this.widgets.find(w => w.name === "inputFormatSelector")?.value || "ALL";
-                    const kw  = (this.widgets.find(w => w.name === "filterKeyword")?.value || "").trim();
+                    const kw = (this.widgets.find(w => w.name === "filterKeyword")?.value || "").trim();
                     const nkw = (this.widgets.find(w => w.name === "negativeKeyword")?.value || "").trim();
 
                     try {
@@ -822,6 +857,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         }
                         const data = await resp.json();
                         rebuildAudioButtons(this, data.files || []);
+                        // 清單重建完成後，重新調整文字框（最高 10 行）與節點整體高度
+                        _fitTextWidgetHeights(this);
                     } catch (e) {
                         console.error("[FlowerAudioMerge] Refresh 失敗：", e);
                     }
@@ -835,17 +872,17 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             // 使用 widgets.push() 直接推入自訂物件，完全掌控 draw 與 mouse 行為
             if (!this.widgets.find(w => w.name === "select_buttons")) {
                 this.widgets.push({
-                    name:             "select_buttons",
-                    type:             "custom_triselect",   // 自訂 type，避免 LiteGraph 標準 button 渲染覆蓋
-                    serialize:        false,
-                    value:            null,
-                    _is_base_widget:  true,
-                    computeSize:      () => [220, 40],
+                    name: "select_buttons",
+                    type: "custom_triselect",   // 自訂 type，避免 LiteGraph 標準 button 渲染覆蓋
+                    serialize: false,
+                    value: null,
+                    _is_base_widget: true,
+                    computeSize: () => [220, 40],
 
                     // 繪製三個並排按鈕（全選 / 全不選 / 反選）
                     draw(ctx, node, width, y, height) {
                         const labels = ["全選", "全不選", "反選"];
-                        const segW   = Math.floor((width - 40) / 3);
+                        const segW = Math.floor((width - 40) / 3);
                         ctx.save();
                         for (let i = 0; i < 3; i++) {
                             const bx = 20 + i * segW + 2;
@@ -874,8 +911,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         if (!node.audioConfigs) return false;
 
                         const totalW = node.size[0] - 40;
-                        const segW   = Math.floor(totalW / 3);
-                        const relX   = pos[0] - 20;
+                        const segW = Math.floor(totalW / 3);
+                        const relX = pos[0] - 20;
                         if (relX < 0 || relX >= totalW) return false;
                         const seg = Math.floor(relX / segW);
 
@@ -967,6 +1004,70 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         };
     };
 
+    // ── 🌸 Flower Cut Silence：裁切結果試聽播放器 ───────────────────────────────
+    // 後端執行後會把裁切結果存成暫存 WAV，並在 ui 中回傳 flower_audio_preview，
+    // 這裡用 <audio controls> 搭配 ComfyUI 的 /view 端點播放（做法與 IndexTTS2 Save Audio 相同）。
+    const setupCutSilence = (nodeType, nodeName) => {
+        if (nodeType.__flower_cs_setup_done) return;
+        nodeType.__flower_cs_setup_done = true;
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            // 建立播放器 DOM widget（不序列化，不寫入工作流程 JSON）
+            if (!this.widgets.find(w => w.name === "result_player")) {
+                const audioEl = document.createElement("audio");
+                audioEl.controls = true;
+                audioEl.style.width = "100%";
+
+                // 播放器控制列高度固定約 54px，限制 min/max 避免被節點多餘高度拉伸
+                const pw = this.addDOMWidget("result_player", "flower_audio_player", audioEl, {
+                    serialize: false,
+                    getMinHeight: () => 54,
+                    getMaxHeight: () => 54,
+                });
+                pw.serialize = false;
+                this._flowerAudioEl = audioEl;
+            }
+
+            // 初始大小：寬度加大以容納播放器，高度取剛好容納所有 widget 的值（僅此一次）
+            this.size = [360, this.computeSize()[1]];
+        };
+
+        // 執行完成：把後端回傳的暫存檔指到播放器（不自動播放，由使用者按播放）
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+            const clip = message?.flower_audio_preview?.[0];
+            const el = this._flowerAudioEl;
+            if (clip && el) {
+                const params = new URLSearchParams({
+                    filename: clip.filename,
+                    subfolder: clip.subfolder || "",
+                    type: clip.type || "temp",
+                });
+                // rand 參數避免瀏覽器快取到舊的試聽檔
+                const rand = app.getRandParam ? app.getRandParam() : `&rand=${Math.random()}`;
+                el.src = api.apiURL(`/view?${params.toString()}${rand}`);
+                el.load();
+            }
+            this.setDirtyCanvas(true);
+        };
+
+        // 刪除節點時停止播放：被移出 DOM 的 <audio> 仍會繼續出聲，必須主動暫停
+        const onRemoved = nodeType.prototype.onRemoved;
+        nodeType.prototype.onRemoved = function () {
+            const el = this._flowerAudioEl;
+            if (el) {
+                el.pause();
+                el.removeAttribute("src");
+                el.load();
+            }
+            if (onRemoved) onRemoved.apply(this, arguments);
+        };
+    };
+
     const setupSplitSentences = (nodeType, nodeName) => {
         if (nodeType.__flower_split_setup_done) return;
         nodeType.__flower_split_setup_done = true;
@@ -1026,6 +1127,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupLoadTextFromFolder(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerAudioMerge") {
                 setupAudioMerge(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerCutSilence") {
+                setupCutSilence(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;

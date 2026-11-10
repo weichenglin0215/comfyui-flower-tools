@@ -200,6 +200,53 @@ def _split_by_chapters(text):
     return blocks
 
 
+# 成對括號表：開頭括號 → 對應的結尾括號。
+# 「開頭括號」到「結尾括號」之間通常是角色說的一句話（或一段完整的註解），
+# 分段時必須完整放在同一個段落之中，否則語氣會被切斷而不順。
+_BRACKET_PAIRS = {
+    '「': '」', '［': '］', '『': '』', '【': '】', '〔': '〕',
+    '｛': '｝', '＜': '＞', '〈': '〉', '《': '》', '（': '）',
+}
+_CLOSE_BRACKETS = frozenset(_BRACKET_PAIRS.values())
+
+
+def _mark_bracket_interiors(text):
+    """
+    標記「在哪些位置切斷會把一對括號切成兩半」。
+
+    回傳長度 len(text)+1 的 bytearray：inside[p] == 1 代表在位置 p 切斷
+    （text[:p] 為前一段、text[p:] 為下一段）會落在某一對括號內部，不可切。
+    對一對括號（開頭位置 o、結尾位置 c）來說，不可切的位置是 o+1 ~ c：
+      - 切在開頭括號之前（p == o）：整對括號都在下一段，可以切。
+      - 切在結尾括號之後（p == c+1）：整對括號都在前一段，可以切。
+
+    配對方式：用堆疊由左到右掃描，結尾括號與「最近一個同種類的開頭括號」配對，
+    夾在中間沒有配到對的開頭括號直接捨棄；沒有開頭可配的結尾括號視為雜訊忽略。
+    因此文字中少了結尾括號（找不到 」）時，那個開頭括號不會被保護，也不會影響其他段落。
+    巢狀括號（如 「他說：『好。』」）會一併保護，外層整對都不可切。
+    """
+    n = len(text)
+    inside = bytearray(n + 1)
+    stack = []  # 每項為 (期待的結尾括號, 開頭括號位置)
+
+    for i, ch in enumerate(text):
+        closer = _BRACKET_PAIRS.get(ch)
+        if closer is not None:
+            # 開頭括號：記下它期待哪一種結尾，等後面遇到再配對
+            stack.append((closer, i))
+        elif ch in _CLOSE_BRACKETS and stack:
+            # 結尾括號：由最近的開頭往回找第一個種類相同的配對
+            for k in range(len(stack) - 1, -1, -1):
+                if stack[k][0] == ch:
+                    open_idx = stack[k][1]
+                    del stack[k:]  # 該開頭及其後尚未配對的開頭一併出堆疊
+                    # open_idx+1 ~ i（含）之間的切點都會把這對括號切開
+                    inside[open_idx + 1:i + 1] = b'\x01' * (i - open_idx)
+                    break
+
+    return inside
+
+
 def _compute_segments(text, max_chars, split_symbols):
     """
     將文字依照最大字數與分段符號切成多段。
@@ -208,6 +255,15 @@ def _compute_segments(text, max_chars, split_symbols):
       從目前段落起點往後算 max_chars 個字元，再回推找最近的分段符號，
       在符號之後（含符號）切斷。若整段都沒有分段符號，強制在 max_chars 處截斷。
       切斷後跳過開頭的空白與換行，再繼續處理下一段。
+
+    成對括號保護（「」『』［］【】〔〕｛｝＜＞〈〉《》（））：
+      括號內通常是角色說的一句話，一定要和結尾括號放在同一個段落，所以：
+      - 切點不可落在一對括號的內部（見 _mark_bracket_interiors）。
+        括號內的 ，。？！ 等分段符號因此不再當作切點，括號只會整對留在前一段或移到下一段。
+      - 括號結尾若緊接在分段符號之後（如 。」 ！』），切點算在結尾括號「之後」，
+        不會把 」 單獨留到下一段開頭。
+      - 若括號本身就比 max_chars 還長，前方又找不到可切的位置，
+        這一段會往後延伸到結尾括號為止（允許超過 max_chars），不會把括號切開。
 
     回傳 [(start, end), ...] 列表，text[start:end] 即為該段落文字。
     """
@@ -218,6 +274,24 @@ def _compute_segments(text, max_chars, split_symbols):
         return [(0, n)]
 
     split_set = set(split_symbols)
+    # 預先標記哪些切點會把成對括號切開（只算一次，後面回推時直接查表）
+    inside = _mark_bracket_interiors(text)
+
+    def is_cut_point(p):
+        """
+        位置 p（text[:p] 為前一段）是否為合法切點：
+          1. 不能落在成對括號內部。
+          2. p 之前必須是分段符號；若緊貼著結尾括號，則略過這些結尾括號後再看是不是分段符號
+             （例：「你好。」 的切點在 」 之後，而不是 。 與 」 之間）。
+        沒有任何括號時，行為與原本「text[p-1] 是分段符號」完全相同。
+        """
+        if inside[p]:
+            return False
+        j = p - 1
+        while j >= 0 and text[j] in _CLOSE_BRACKETS:
+            j -= 1
+        return j >= 0 and text[j] in split_set
+
     segments = []
     start = 0
 
@@ -231,22 +305,26 @@ def _compute_segments(text, max_chars, split_symbols):
         search_pos = start + max_chars
         cut = -1
 
-        # 第一輪：找「分段符號 + 緊接換行」（真正的段落邊界，如 。\n ！\n ？\n）
+        # 第一輪：找「分段符號 + 緊接換行」（真正的段落邊界，如 。\n ！\n ？\n 或 。」\n）
         for i in range(search_pos, start, -1):
-            if text[i - 1] in split_set and i < n and text[i] in '\n\r':
+            if i < n and text[i] in '\n\r' and is_cut_point(i):
                 cut = i  # 切在符號之後、換行之前；換行由後方跳過迴圈處理
                 break
 
         # 第二輪回退：找任意分段符號（段落邊界不在範圍內時的降級處理）
         if cut == -1:
             for i in range(search_pos, start, -1):
-                if text[i - 1] in split_set:
+                if is_cut_point(i):
                     cut = i
                     break
 
-        # 最終回退：整段都沒有分段符號，強制在上限處截斷
+        # 最終回退：整段都沒有可切的位置，強制在上限處截斷。
+        # 若上限剛好落在一對括號內部，就往後延伸到該括號結尾之後，確保括號不被切開
+        # （這一段會超過 max_chars，但括號內的話必須完整保留）
         if cut == -1:
             cut = search_pos
+            while cut < n and inside[cut]:
+                cut += 1
 
         segments.append((start, cut))
 
@@ -283,10 +361,11 @@ class FlowerLoadTextFromFolder:
                 "sort_mode": (["字母排序(Alphabetical)", "自然排序(Natural)"],),
             },
             "optional": {
-                # 7. 分段字數上限（-1 = 不分段；≥256 = 啟用分段）
+                # 7. 分段字數上限（-1 = 不分段；≥100 = 啟用分段）
                 #    optional 確保舊工作流程載入時不會因缺少此欄位而報錯
-                "max_chars_per_segment": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+                "max_chars_per_segment": ("INT", {"default": 100, "min": -1, "max": 0xffffffffffffffff}),
                 # 8. 分段符號，回推時以此符號集為合法切斷點
+                #    （「」『』［］【】〔〕｛｝＜＞〈〉《》（） 成對括號內部不會被切斷，見 _compute_segments）
                 "split_symbols": ("STRING", {"default": ",.?!;:，。？！；："}),
                 # 9. 章節分段模式：
                 #    - 無：不分章節，整篇依字數上限分段，檔名不加「第X章」
@@ -309,7 +388,7 @@ class FlowerLoadTextFromFolder:
     OUTPUT_NODE = True
 
     def load_text_from_folder(self, directory, filter_keyword, seed, continuous_processing,
-                               sort_mode, max_chars_per_segment=-1, split_symbols=",.?!;:，。？！；：",
+                               sort_mode, max_chars_per_segment=100, split_symbols=",.?!;:，。？！；：",
                                negativeKeyword="", split_by_chapter="根據章編號分章輸出(第一章)",
                                chars_per_auto_chapter=4000):
         base_dir = directory.strip()
@@ -340,8 +419,8 @@ class FlowerLoadTextFromFolder:
             empty_msg = "沒有符合條件的文字檔案"
             return {"ui": {"text": [empty_msg], "file_list": [""]}, "result": (empty_msg, "", "", "")}
 
-        # ── 分段模式（max_chars_per_segment ≥ 256）──
-        if max_chars_per_segment >= 256:
+        # ── 分段模式（max_chars_per_segment ≥ 100）──
+        if max_chars_per_segment >= 100:
             return self._load_with_segments(
                 base_dir, all_files, seed, continuous_processing,
                 max_chars_per_segment, split_symbols, split_by_chapter,
@@ -535,7 +614,7 @@ async def preview_text_segments(request):
             seed                  = _qi("seed", 0),
             continuous_processing = _qi("continuous_processing", 1),
             sort_mode             = q.get("sort_mode", "字母排序(Alphabetical)"),
-            max_chars_per_segment = _qi("max_chars_per_segment", -1),
+            max_chars_per_segment = _qi("max_chars_per_segment", 100),
             split_symbols         = q.get("split_symbols", ",.?!;:，。？！；："),
             negativeKeyword       = q.get("negativeKeyword", ""),
             split_by_chapter      = q.get("split_by_chapter", "根據章編號分章輸出(第一章)"),
