@@ -659,19 +659,39 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         if (nodeType.__flower_am_setup_done) return;
         nodeType.__flower_am_setup_done = true;
 
+        // ── 顯示 / 隱藏音檔清單列表 ──────────────────────────────────────────────
+        // 隱藏只是「把音檔按鈕從節點上移出」，勾選狀態（node.audioConfigs / fileConfigs）完全不動，
+        // 所以不影響合併功能，再次顯示時 ON/OFF 也會維持原樣。
+        // 完整的按鈕清單記在 node._audioButtons（plain 物件，尚未是實體 widget）；
+        // 隱藏狀態記在 node.properties，會隨工作流程一起儲存，載入後維持隱藏（預設為顯示）。
+        const LIST_HIDDEN_PROP = "flower_audio_list_hidden";
+
+        // 依 node._audioListHidden 決定音檔按鈕是否放在節點上。
+        // 一律用「單一次 splice」同時完成移出與放入（原因見 rebuildAudioButtons 的效能說明）
+        const _applyAudioListVisibility = (node) => {
+            if (!node.widgets) return;
+            const keptWidgets = node.widgets.filter(w => !w._is_audio_file_btn);
+            const shownButtons = node._audioListHidden ? [] : (node._audioButtons || []);
+            node.widgets.splice(0, node.widgets.length, ...keptWidgets, ...shownButtons);
+        };
+
+        const _setAudioListHidden = (node, hidden) => {
+            node._audioListHidden = !!hidden;
+            // 記在 node.properties 隨工作流程儲存；顯示（預設）時直接移除，讓舊工作流程維持原樣
+            if (!node.properties) node.properties = {};
+            if (node._audioListHidden) node.properties[LIST_HIDDEN_PROP] = true;
+            else delete node.properties[LIST_HIDDEN_PROP];
+
+            _applyAudioListVisibility(node);
+            // 隱藏 → 節點高度縮短；顯示 → 節點高度放大到容納所有按鈕（與 Refresh 後的高度處理相同）
+            _fitTextWidgetHeights(node);
+        };
+
         // ── 重新建立音檔勾選按鈕清單 ────────────────────────────────────────────
         // 移除舊的音檔按鈕，依新的 files 陣列重新產生，並同步 audioConfigs / fileConfigs widget
+        // （新舊按鈕的「移除 + 加入」會在函式最後合併成一次 splice，原因見下方「一次性替換」的說明）
         const rebuildAudioButtons = (node, files) => {
             if (!node.widgets) return;
-
-            // 移除所有標記為音檔按鈕的 widget（保留基礎 widget）
-            for (let i = node.widgets.length - 1; i >= 0; i--) {
-                const w = node.widgets[i];
-                if (w._is_audio_file_btn) {
-                    if (w.inputEl) w.inputEl.remove();
-                    node.widgets.splice(i, 1);
-                }
-            }
 
             // 固定字母排序，與 Python 後端保持一致，避免清單順序混亂
             const sortedFiles = [...files].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
@@ -687,9 +707,12 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             const cfw = node.widgets.find(w => w.name === "fileConfigs");
             if (cfw) cfw.value = JSON.stringify(node.audioConfigs, null, 2);
 
-            // 依排序後的清單加入音檔切換按鈕
+            // 依排序後的清單「建立」音檔切換按鈕物件（此時還不加入節點，最後一次性加入）。
+            // 物件欄位與 node.addWidget("button", ...) 產生的相同，加入節點時前端會自動轉成實體按鈕 widget
+            const makeButtonWidget = (name, callback) => ({ type: "button", name, value: null, y: 0, options: {}, callback });
+            const newButtons = [];
             for (const filename of sortedFiles) {
-                const btn = node.addWidget("button", filename, null, () => {
+                const btn = makeButtonWidget(filename, () => {
                     // 切換該檔案的勾選狀態
                     if (!node.audioConfigs) node.audioConfigs = {};
                     const prev = node.audioConfigs[filename]?.enabled || false;
@@ -742,7 +765,29 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     }
                     ctx.fillText(displayName, 100, y + 22);
                 };
+                newButtons.push(btn);
             }
+
+            // ── 一次性替換節點上的音檔按鈕（移除全部舊按鈕 + 加入全部新按鈕 = 只做一次 splice）──
+            // 效能關鍵：ComfyUI 前端（1.57.x）在每次 node.widgets 被 push / splice 之後，
+            // 都會對「目前全部」widget 重新整理一次（轉成實體 widget、重名檢查、重新登記），
+            // 單次成本大約與 widget 數量的平方成正比（450 個 widget 時單次約 120 ms）。
+            // 舊寫法逐一 addWidget 與逐一 splice，N 個檔案就整理 2N 次，總成本約 N 的三次方：
+            // 450 個檔案時「加入」與「移除」各要約 25 秒，瀏覽器完全沒有回應。
+            // 合併成單一次 splice 後只整理一次（450 個約 0.15 秒）。
+            // 注意：請勿改回在迴圈中逐一 addWidget / splice。
+            for (const w of node.widgets) {
+                if (w._is_audio_file_btn && w.inputEl) w.inputEl.remove();
+            }
+            // 記住完整的新按鈕清單，再依「顯示 / 隱藏」狀態放上節點：
+            // 清單目前是隱藏時，新按鈕只先記下、不放上節點（Refresh 後仍維持隱藏）
+            node._audioButtons = newButtons;
+            _applyAudioListVisibility(node);
+
+            // 原本每次 addWidget 內部都會呼叫 expandToFitContent()（只放大、不縮小）；
+            // 改為一次加入後，這裡補一次同樣的效果，載入工作流程時節點高度仍足以容納所有按鈕
+            const needSize = node.computeSize();
+            node.setSize([Math.max(node.size[0], needSize[0]), Math.max(node.size[1], needSize[1])]);
 
             // 重新整理後同步 result_dialog
             _syncResultDialog(node);
@@ -804,6 +849,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
 
             // 初始化音檔設定快取（用於在 JS 端存儲各檔案的勾選狀態）
             this.audioConfigs = {};
+            // 音檔清單列表預設為顯示；_audioButtons 為完整按鈕清單（隱藏時按鈕不在節點上，靠它還原）
+            this._audioListHidden = false;
+            this._audioButtons = [];
 
             // 標記 Python 定義的基礎 widget，防止被 rebuildAudioButtons 誤刪
             if (this.widgets) {
@@ -868,7 +916,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 rfBtn._is_base_widget = true;
             }
 
-            // 建立全選 / 全不選 / 反選 三連按鈕
+            // 建立全選 / 全不選 / 反選 / 顯示（隱藏）清單 四連按鈕
             // 使用 widgets.push() 直接推入自訂物件，完全掌控 draw 與 mouse 行為
             if (!this.widgets.find(w => w.name === "select_buttons")) {
                 this.widgets.push({
@@ -879,16 +927,18 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     _is_base_widget: true,
                     computeSize: () => [220, 40],
 
-                    // 繪製三個並排按鈕（全選 / 全不選 / 反選）
+                    // 繪製四個並排按鈕（全選 / 全不選 / 反選 / 顯示或隱藏清單）
+                    // 第四個按鈕的文字依目前狀態顯示「點下去會發生的事」：清單顯示中 → 「隱藏清單」，已隱藏 → 「顯示清單」
                     draw(ctx, node, width, y, height) {
-                        const labels = ["全選", "全不選", "反選"];
-                        const segW = Math.floor((width - 40) / 3);
+                        const listHidden = !!node._audioListHidden;
+                        const labels = ["全選", "全不選", "反選", listHidden ? "顯示清單" : "隱藏清單"];
+                        const segW = Math.floor((width - 40) / 4);
                         ctx.save();
-                        for (let i = 0; i < 3; i++) {
+                        for (let i = 0; i < 4; i++) {
                             const bx = 20 + i * segW + 2;
                             const bw = segW - 4;
-                            // 按鈕背景（中灰，在深色主題下清晰可見）
-                            ctx.fillStyle = "#555";
+                            // 按鈕背景（中灰，在深色主題下清晰可見）；清單隱藏中時第四顆改用藍色提示目前狀態
+                            ctx.fillStyle = (i === 3 && listHidden) ? "#2f6f9f" : "#555";
                             ctx.fillRect(bx, y + 3, bw, 33);
                             // 按鈕外框
                             ctx.strokeStyle = "#999";
@@ -911,10 +961,16 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         if (!node.audioConfigs) return false;
 
                         const totalW = node.size[0] - 40;
-                        const segW = Math.floor(totalW / 3);
+                        const segW = Math.floor(totalW / 4);
                         const relX = pos[0] - 20;
                         if (relX < 0 || relX >= totalW) return false;
                         const seg = Math.floor(relX / segW);
+
+                        // 第四顆：顯示 / 隱藏清單列表（只切換介面，不動任何勾選狀態）
+                        if (seg === 3) {
+                            _setAudioListHidden(node, !node._audioListHidden);
+                            return true;
+                        }
 
                         if (seg === 0) {
                             for (const k in node.audioConfigs) node.audioConfigs[k].enabled = true;
@@ -977,6 +1033,9 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function (config) {
             if (onConfigure) onConfigure.apply(this, arguments);
+            // 還原「清單列表是否隱藏」（存在 node.properties；舊工作流程沒有這個欄位 → 預設顯示）。
+            // 必須在重建按鈕之前設定，重建時才知道要不要把按鈕放上節點
+            this._audioListHidden = !!this.properties?.[LIST_HIDDEN_PROP];
             const cfw = this.widgets.find(w => w.name === "fileConfigs");
             if (cfw?.value) {
                 try {
