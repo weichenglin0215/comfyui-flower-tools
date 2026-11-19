@@ -588,6 +588,10 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         split_symbols: wv("split_symbols", ",.?!;:，。？！；："),
                         split_by_chapter: wv("split_by_chapter", "根據章編號分章輸出(第一章)"),
                         chars_per_auto_chapter: wv("chars_per_auto_chapter", "4000"),
+                        // 勾選時預覽框也會把全形空白換成半形空白（與節點輸出一致）；BOOLEAN widget 的值為 true / false
+                        replace_fullwidth_space: wv("replace_fullwidth_space", "true"),
+                        // 勾選時預覽框的文字結尾若不是分段符號，也會補上全形句點（與節點輸出一致）
+                        append_fullwidth_period: wv("append_fullwidth_period", "true"),
                     });
 
                     try {

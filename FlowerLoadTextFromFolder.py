@@ -40,6 +40,40 @@ def _get_sort_key(sort_mode):
         return lambda f: f.lower()
 
 
+def _replace_fullwidth_space(text):
+    """
+    將全形空白（U+3000，中文常見的段首縮排 "　　"）取代為半形空白。
+    有些 AI 語音無法正常處理全形空白。一個全形空白換成一個半形空白，字數不變。
+    只處理 U+3000，不動換行、定位點或其他空白字元。
+    """
+    return text.replace("　", " ")
+
+
+def _append_fullwidth_period(text, split_symbols):
+    """
+    若輸出文字的「最後一個字」不是分段符號，就在文字末端補上一個全形句點「。」。
+
+    用意：有些 AI 語音在句尾不是標點時，最後一個字的尾音很容易被截斷；
+    補上句點後，語音會把最後一個字完整唸完。
+
+    規則：
+      - 「最後一個字」指最後一個非空白字元；補上的句點緊接在它後面，
+        原本結尾的換行／空白保持在句點之後（例：「你好\\n」→「你好。\\n」，不會變成「你好\\n。」）。
+      - 最後一個字已經是 split_symbols 中的任一字元就不補（例：，。？！；：）。
+      - 全形句點「。」本身一律視為已有結尾，即使使用者把 split_symbols 清空也不會變成「。。」。
+      - 結尾是成對括號的結尾（如「你好。」的 」）時，最後一個字是 」，不是分段符號，所以仍會補上句點。
+      - 全空白或空字串不處理。
+    """
+    body = text.rstrip()
+    if not body:
+        return text
+    last = body[-1]
+    if last == "。" or last in split_symbols:
+        return text
+    # body 之後剩下的就是被 rstrip 去掉的結尾空白，原樣接回去
+    return body + "。" + text[len(body):]
+
+
 # 章節標題正規式：行首（允許前置空白與各式括弧）後接「第 + 中文/阿拉伯數字 + 章」
 # 例：第一章、第十二章、第123章、【第三章】、（第二章）、「第五章」皆能命中
 _CHAPTER_RE = re.compile(
@@ -333,8 +367,9 @@ def _compute_segments(text, max_chars, split_symbols):
             cut += 1
         start = cut
 
-    # 若最後一段字數不足 128，合併到倒數第二段，避免產生過短的尾段
-    if len(segments) > 1 and (segments[-1][1] - segments[-1][0]) < 128:
+    # 若最後一段字數不足 64，合併到倒數第二段，避免產生過短的尾段
+    # （原為 128；改為 64 後，字數介於 64~127 的尾段會保留為獨立一段，不再被併入前一段）
+    if len(segments) > 1 and (segments[-1][1] - segments[-1][0]) < 64:
         segments[-2] = (segments[-2][0], segments[-1][1])
         segments.pop()
 
@@ -378,6 +413,18 @@ class FlowerLoadTextFromFolder:
                 ),
                 # 10. 自編章節的限制字數：用於「根據字數自編章節輸出」模式
                 "chars_per_auto_chapter": ("INT", {"default": 4000, "min": 1, "max": 0xffffffffffffffff}),
+                # 11. 以半形空白取代全形空白（預設勾選）：
+                #     輸出文字（text）與節點上的預覽框，都會把全形空白（U+3000）換成半形空白，
+                #     因為有些 AI 語音無法正常處理全形空白。只影響輸出的文字內容，
+                #     不影響分段位置（取代後字數不變）與檔名類輸出。
+                #     放在 optional 的最後面，舊工作流程載入時不會因缺少此欄位而錯位或報錯
+                "replace_fullwidth_space": ("BOOLEAN", {"default": True, "label_on": "以半形空白取代全形空白", "label_off": "不取代（保留全形空白）"}),
+                # 12. 輸出文字末端增加全形句點（預設勾選）：
+                #     若輸出文字（text）與預覽框的最後一個字不是分段符號（split_symbols 的任一字元），
+                #     就在末端補上「。」，避免 AI 語音唸句子最後一個字時尾音被截斷。
+                #     同樣放在 optional 最後面，舊工作流程載入時不會錯位；
+                #     不影響分段位置與檔名類輸出（只改輸出的文字內容）
+                "append_fullwidth_period": ("BOOLEAN", {"default": True, "label_on": "輸出文字末端增加全形句點", "label_off": "不增加（維持原文結尾）"}),
             },
         }
 
@@ -390,7 +437,8 @@ class FlowerLoadTextFromFolder:
     def load_text_from_folder(self, directory, filter_keyword, seed, continuous_processing,
                                sort_mode, max_chars_per_segment=100, split_symbols=",.?!;:，。？！；：",
                                negativeKeyword="", split_by_chapter="根據章編號分章輸出(第一章)",
-                               chars_per_auto_chapter=4000):
+                               chars_per_auto_chapter=4000, replace_fullwidth_space=True,
+                               append_fullwidth_period=True):
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -424,7 +472,8 @@ class FlowerLoadTextFromFolder:
             return self._load_with_segments(
                 base_dir, all_files, seed, continuous_processing,
                 max_chars_per_segment, split_symbols, split_by_chapter,
-                chars_per_auto_chapter,
+                chars_per_auto_chapter, replace_fullwidth_space,
+                append_fullwidth_period,
             )
 
         # ── 直接模式（不分段）──
@@ -444,6 +493,14 @@ class FlowerLoadTextFromFolder:
                 "result": (str(e), full_path, selected_file, file_name_no_ext),
             }
 
+        # 全形空白 → 半形空白（text 輸出與預覽框共用這份 content，所以兩邊一起生效）
+        if replace_fullwidth_space:
+            content = _replace_fullwidth_space(content)
+
+        # 結尾不是分段符號就補上全形句點（不分段時，整個檔案內容就是「這一段」）
+        if append_fullwidth_period:
+            content = _append_fullwidth_period(content, split_symbols)
+
         # 產生編號檔案清單（從 0 開始）
         file_list_lines = [f"{i}- {fn}" for i, fn in enumerate(all_files)]
         file_list_str = "\n".join(file_list_lines)
@@ -456,7 +513,8 @@ class FlowerLoadTextFromFolder:
     def _load_with_segments(self, base_dir, all_files, seed, continuous_processing,
                              max_chars, split_symbols,
                              split_by_chapter="根據章編號分章輸出(第一章)",
-                             chars_per_auto_chapter=4000):
+                             chars_per_auto_chapter=4000, replace_fullwidth_space=True,
+                             append_fullwidth_period=True):
         """
         分段模式核心邏輯。
 
@@ -532,6 +590,14 @@ class FlowerLoadTextFromFolder:
             with open(entry['full_path'], "r", encoding="utf-8") as f:
                 full_text = f.read()
             content = full_text[entry['start']:entry['end']]
+            # 全形空白 → 半形空白。在「切出段落之後」才取代：兩者都是 1 個字元，
+            # 所以不會改變分段位置，檔名中的「結尾字元位置」也不受影響
+            if replace_fullwidth_space:
+                content = _replace_fullwidth_space(content)
+            # 這一段的結尾不是分段符號就補上全形句點。同樣只改輸出內容，
+            # 不影響分段位置與檔名中的「結尾字元位置」（file_list 與虛擬檔名都用原文的 end）
+            if append_fullwidth_period:
+                content = _append_fullwidth_period(content, split_symbols)
         except Exception as e:
             content = str(e)
 
@@ -606,6 +672,13 @@ async def preview_text_segments(request):
         except (ValueError, TypeError):
             return default
 
+    # 布林參數：前端以字串 "true" / "false" 傳入；沒傳時採用節點預設（勾選）
+    def _qb(name, default):
+        v = q.get(name)
+        if v is None:
+            return default
+        return str(v).strip().lower() in ("true", "1", "on", "yes")
+
     node = FlowerLoadTextFromFolder()
     try:
         result = node.load_text_from_folder(
@@ -619,6 +692,8 @@ async def preview_text_segments(request):
             negativeKeyword       = q.get("negativeKeyword", ""),
             split_by_chapter      = q.get("split_by_chapter", "根據章編號分章輸出(第一章)"),
             chars_per_auto_chapter = _qi("chars_per_auto_chapter", 4000),
+            replace_fullwidth_space = _qb("replace_fullwidth_space", True),
+            append_fullwidth_period = _qb("append_fullwidth_period", True),
         )
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
