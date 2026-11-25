@@ -74,9 +74,28 @@ _LINE_LEADING_BLANK_RE = re.compile(r"^(?:[^\S\r\n]|" + chr(0xFEFF) + r")+", re.
 def _strip_line_leading_space(text):
     """
     刪除每一行行首的空白字元（全形、半形都刪），避免 AI 語音唸到行首空白時產生顫音。
-    只刪行首：行中與行尾的空白都保留，換行也保留（只有空白的行會變成空行，行數不變）。
+    只刪行首：行中與行尾的空白都保留，換行也保留（這個函數本身不刪行，只有空白的行會變成空行；
+    要不要把空行整行刪掉由 _remove_blank_lines 決定）。
     """
     return _LINE_LEADING_BLANK_RE.sub("", text)
+
+
+# 空白行：整行沒有任何字，或只由空白字元組成（半形、全形、Tab、不換行空白等）。
+# 看不見的 BOM 也算空白，和上面「行首空白字元」的認定一致
+_BLANK_LINE_RE = re.compile(r"(?:\s|" + chr(0xFEFF) + r")*")
+
+
+def _remove_blank_lines(text):
+    """
+    刪除空白行，避免原文稿多餘的空行干擾 AI 語音。
+      - 沒有任何字、或只有空白字元（全形、半形都算）的行，整行刪除。
+      - 有字的行原封不動（行首、行中、行尾的空白都不在這裡處理）。
+      - 結果的開頭與結尾不會留下空行：最後一行有字的後面不再接換行
+        （否則預覽框最後仍會看到一個空行）。
+      - 整段文字全是空白時，回傳空字串。
+    讀檔時使用 Python 的文字模式，\\r\\n 與 \\r 都已轉成 \\n，所以只需要用 \\n 分行。
+    """
+    return "\n".join(line for line in text.split("\n") if not _BLANK_LINE_RE.fullmatch(line))
 
 
 def _append_fullwidth_period(text, split_symbols):
@@ -578,6 +597,11 @@ class FlowerLoadTextFromFolder:
                 #     避免 AI 語音產生顫音。放在 optional 最後面，舊工作流程載入時不會錯位；
                 #     分段仍以原文計算，所以分段位置與檔名類輸出不受影響
                 "strip_line_leading_space": ("BOOLEAN", {"default": True, "label_on": "刪除行首空白字元", "label_off": "不刪除（保留行首空白）"}),
+                # 14. 刪除空白行（預設勾選）：
+                #     輸出文字（text）與預覽框中，沒有任何字或只有空白字元（全形、半形都算）的行整行刪除，
+                #     避免原文稿多餘的空行干擾 AI 語音。放在 optional 最後面，舊工作流程載入時不會錯位；
+                #     分段仍以原文計算，所以分段位置與檔名類輸出不受影響
+                "remove_blank_lines": ("BOOLEAN", {"default": True, "label_on": "刪除空白行", "label_off": "不刪除（保留空白行）"}),
             },
         }
 
@@ -591,7 +615,8 @@ class FlowerLoadTextFromFolder:
                                sort_mode, max_chars_per_segment=100, split_symbols=",.?!;:，。？！；：",
                                negativeKeyword="", split_by_chapter="根據章編號分章輸出(第一章)",
                                chars_per_auto_chapter=4000, replace_fullwidth_space=True,
-                               append_fullwidth_period=True, strip_line_leading_space=True):
+                               append_fullwidth_period=True, strip_line_leading_space=True,
+                               remove_blank_lines=True):
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -626,7 +651,7 @@ class FlowerLoadTextFromFolder:
                 base_dir, all_files, seed, continuous_processing,
                 max_chars_per_segment, split_symbols, split_by_chapter,
                 chars_per_auto_chapter, replace_fullwidth_space,
-                append_fullwidth_period, strip_line_leading_space,
+                append_fullwidth_period, strip_line_leading_space, remove_blank_lines,
             )
 
         # ── 直接模式（不分段）──
@@ -653,6 +678,10 @@ class FlowerLoadTextFromFolder:
         if strip_line_leading_space:
             content = _strip_line_leading_space(content)
 
+        # 刪除空白行（要在補句點之前，句點才會接在最後一行有字的後面）
+        if remove_blank_lines:
+            content = _remove_blank_lines(content)
+
         # 結尾不是分段符號就補上全形句點（不分段時，整個檔案內容就是「這一段」）
         if append_fullwidth_period:
             content = _append_fullwidth_period(content, split_symbols)
@@ -670,13 +699,14 @@ class FlowerLoadTextFromFolder:
                              max_chars, split_symbols,
                              split_by_chapter="根據章編號分章輸出(第一章)",
                              chars_per_auto_chapter=4000, replace_fullwidth_space=True,
-                             append_fullwidth_period=True, strip_line_leading_space=True):
+                             append_fullwidth_period=True, strip_line_leading_space=True,
+                             remove_blank_lines=True):
         """
         分段模式核心邏輯。
 
         步驟：
           1. 逐一讀取所有符合條件的 .txt 檔案
-          2. 對每個檔案用 _compute_segments() 計算分段位置
+          2. 對每個檔案用 _compute_segments() 計算分段位置，內容全是空白行的段落略過
           3. 將所有分段展平成一個虛擬條目列表
           4. 依 seed / continuous_processing 算出索引，取出對應段落文字
 
@@ -716,6 +746,13 @@ class FlowerLoadTextFromFolder:
             for chap_idx, (blk_start, blk_end, chap_label) in enumerate(chapter_blocks, 1):
                 block_text = text[blk_start:blk_end]
                 for s, e in _compute_segments(block_text, max_chars, split_symbols):
+                    # 內容全是空白行的段落不列入清單：沒有任何文字可唸，
+                    # 送給 AI 語音只會得到空字串（常見於檔案結尾的多行全形空白剛好自成一段）。
+                    # 空的或全是空白的檔案也一樣不列入。
+                    # 不受「刪除空白行」勾選與否影響，切換該選項時清單與 seed 編號才不會跟著變動；
+                    # 段落序號是過濾之後才編的，所以仍然連續不跳號
+                    if _BLANK_LINE_RE.fullmatch(block_text[s:e]):
+                        continue
                     # 將區塊內相對位置還原為整篇絕對位置，並記錄所屬章節標籤
                     segments.append((blk_start + s, blk_start + e, chap_label, chap_idx))
 
@@ -735,7 +772,7 @@ class FlowerLoadTextFromFolder:
                 })
 
         if not virtual_entries:
-            msg = "無法建立分段列表（所有檔案皆無法讀取）"
+            msg = "無法建立分段列表（所有檔案皆無法讀取，或沒有任何文字內容）"
             return {"ui": {"text": [msg], "file_list": [""]}, "result": (msg, "", "", "")}
 
         # 依 seed 計算虛擬列表索引
@@ -753,6 +790,9 @@ class FlowerLoadTextFromFolder:
             # 刪除每一行行首的空白字元。也是在切出段落之後才刪，分段位置不受影響
             if strip_line_leading_space:
                 content = _strip_line_leading_space(content)
+            # 刪除空白行。同樣只改這一段的輸出內容，分段位置不受影響；要在補句點之前做
+            if remove_blank_lines:
+                content = _remove_blank_lines(content)
             # 這一段的結尾不是分段符號就補上全形句點。同樣只改輸出內容，
             # 不影響分段位置與檔名中的「結尾字元位置」（file_list 與虛擬檔名都用原文的 end）
             if append_fullwidth_period:
@@ -854,6 +894,7 @@ async def preview_text_segments(request):
             replace_fullwidth_space = _qb("replace_fullwidth_space", True),
             append_fullwidth_period = _qb("append_fullwidth_period", True),
             strip_line_leading_space = _qb("strip_line_leading_space", True),
+            remove_blank_lines = _qb("remove_blank_lines", True),
         )
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)

@@ -594,6 +594,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         append_fullwidth_period: wv("append_fullwidth_period", "true"),
                         // 勾選時預覽框也會刪除每一行行首的空白字元（與節點輸出一致）
                         strip_line_leading_space: wv("strip_line_leading_space", "true"),
+                        // 勾選時預覽框也會刪除空白行（與節點輸出一致）
+                        remove_blank_lines: wv("remove_blank_lines", "true"),
                     });
 
                     try {
