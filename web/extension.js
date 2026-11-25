@@ -581,7 +581,7 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         directory: wv("directory", "").trim(),
                         filter_keyword: wv("filter_keyword", "").trim(),
                         negativeKeyword: wv("negativeKeyword", "").trim(),
-                        seed: wv("seed", "0"),
+                        seed: wv("seed", "1"),
                         continuous_processing: wv("continuous_processing", "1"),
                         sort_mode: wv("sort_mode", "字母排序(Alphabetical)"),
                         max_chars_per_segment: wv("max_chars_per_segment", "100"),
@@ -592,6 +592,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         replace_fullwidth_space: wv("replace_fullwidth_space", "true"),
                         // 勾選時預覽框的文字結尾若不是分段符號，也會補上全形句點（與節點輸出一致）
                         append_fullwidth_period: wv("append_fullwidth_period", "true"),
+                        // 勾選時預覽框也會刪除每一行行首的空白字元（與節點輸出一致）
+                        strip_line_leading_space: wv("strip_line_leading_space", "true"),
                     });
 
                     try {
@@ -634,6 +636,12 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function (config) {
             if (onConfigure) onConfigure.apply(this, arguments);
+
+            // seed 改為從 1 開始（對應下方清單編號）。舊工作流程存的可能是 0，而後端的最小值是 1，
+            // 不修正的話執行時會被後端擋下（value smaller than min），所以載入後把小於 1 的值改成 1。
+            // onConfigure 呼叫時，儲存的 widget 值已經套用完畢。
+            const seedWidget = this.widgets?.find(w => w.name === "seed");
+            if (seedWidget && Number(seedWidget.value) < 1) seedWidget.value = 1;
         };
 
         const onExecuted = nodeType.prototype.onExecuted;
@@ -923,6 +931,14 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
             // 建立全選 / 全不選 / 反選 / 顯示（隱藏）清單 四連按鈕
             // 使用 widgets.push() 直接推入自訂物件，完全掌控 draw 與 mouse 行為
             if (!this.widgets.find(w => w.name === "select_buttons")) {
+                // 四顆按鈕「最近一次實際畫出來」的每顆寬度（含左右各 2px 間隙）。
+                // draw() 每次畫完就更新，mouse() 用它判斷點到哪一顆——畫的和點的永遠是同一份幾何。
+                //
+                // 為什麼不能在 mouse() 裡用 node.size[0] 重新算：前端傳給 draw() 的 width 與節點寬度
+                // 並不保證相同（見下方 draw() 的說明）。兩邊寬度不同時，節點越寬，偵測區就越偏離畫出來的按鈕。
+                // draw() 與 mouse() 的座標系也一定一致：一般模式是以節點左上角為原點，
+                // Vue 節點模式是以該 widget 的畫布元素左上角為原點，兩種模式 draw 與 mouse 用的都是同一個原點。
+                const btnGeo = { segW: 0 };
                 this.widgets.push({
                     name: "select_buttons",
                     type: "custom_triselect",   // 自訂 type，避免 LiteGraph 標準 button 渲染覆蓋
@@ -934,9 +950,21 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                     // 繪製四個並排按鈕（全選 / 全不選 / 反選 / 顯示或隱藏清單）
                     // 第四個按鈕的文字依目前狀態顯示「點下去會發生的事」：清單顯示中 → 「隱藏清單」，已隱藏 → 「顯示清單」
                     draw(ctx, node, width, y, height) {
+                        // 前端呼叫 draw() 時傳入的 width 是 `widget.width || 節點寬度`，
+                        // 而且前端判斷「點到哪個 widget」時也用同一個值（點擊必須落在 widget.width 範圍內才會進到 mouse）。
+                        // widget.width 只有「Vue 節點模式」的元件會寫入（每次重繪都設成該畫布元素的寬度）。
+                        // 曾經開過 Vue 節點模式、又切回一般模式時，這個舊值會殘留在 widget 上，
+                        // 結果：按鈕寬度卡在舊值、不再跟著節點變寬，節點右側也點不到按鈕。
+                        // 所以在一般（litegraph 畫布）模式下，發現殘留的舊值就清掉，改用節點目前的寬度。
+                        // （Vue 節點模式的 ctx 是該 widget 自己的畫布，不是主畫布，不能清，否則會被每次重繪蓋回去。）
+                        if (this.width && ctx.canvas === app.canvas?.canvas) {
+                            this.width = undefined;
+                            width = node.renderingSize?.[0] ?? node.size[0];
+                        }
                         const listHidden = !!node._audioListHidden;
                         const labels = ["全選", "全不選", "反選", listHidden ? "顯示清單" : "隱藏清單"];
                         const segW = Math.floor((width - 40) / 4);
+                        btnGeo.segW = segW;   // 記下這次實際畫出來的幾何，給 mouse() 用
                         ctx.save();
                         for (let i = 0; i < 4; i++) {
                             const bx = 20 + i * segW + 2;
@@ -964,8 +992,11 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                         if (event.type !== "pointerdown" && event.type !== "mousedown") return false;
                         if (!node.audioConfigs) return false;
 
-                        const totalW = node.size[0] - 40;
-                        const segW = Math.floor(totalW / 4);
+                        // 用 draw() 最近一次實際畫出來的幾何判斷（見 btnGeo 的說明），不用 node.size[0]。
+                        // 還沒畫過（理論上點得到就一定畫過）才退回用節點寬度估算。
+                        const segW = btnGeo.segW > 0 ? btnGeo.segW : Math.floor((node.size[0] - 40) / 4);
+                        if (!(segW > 0)) return false;
+                        const totalW = segW * 4;
                         const relX = pos[0] - 20;
                         if (relX < 0 || relX >= totalW) return false;
                         const seg = Math.floor(relX / segW);
@@ -1173,6 +1204,125 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
         };
     };
 
+    // ── 🌸Flower Int From Lines：自動顯示多行文字的總行數 ─────────────────────
+    // 行數的算法與後端 _parse_int_lines 一致：空白行不算，所以這個數字就是 seed 可以選到的行數
+    // （seed 從 0 開始，有效範圍是 0 ~ 行數-1，等於行數時繞回第一行）。
+    // 分行符號的集合比照 Python 的 str.splitlines()。
+    const countTextLines = (text) =>
+        String(text ?? "")
+            .split(/\r\n|[\r\n\v\f\u001c-\u001e\u0085\u2028\u2029]/)
+            .filter(line => line.trim() !== "").length;
+
+    const setupIntFromLines = (nodeType, nodeName) => {
+        if (nodeType.__flower_ifl_setup_done) return;
+        nodeType.__flower_ifl_setup_done = true;
+
+        const COUNT_WIDGET = "line_count";
+
+        const setLineCount = (node, count) => {
+            const countWidget = node.widgets?.find(w => w.name === COUNT_WIDGET);
+            if (!countWidget || countWidget.value === count) return;
+            countWidget.value = count;
+            node.setDirtyCanvas(true, true);
+            // Vue 節點模式下，自繪 widget 畫在自己的畫布上，值變了不會自動重畫，要呼叫前端提供的 triggerDraw
+            countWidget.triggerDraw?.();
+        };
+
+        const onNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function () {
+            if (onNodeCreated) onNodeCreated.apply(this, arguments);
+
+            const node = this;
+            const textWidget = this.widgets?.find(w => w.name === "text");
+            if (!textWidget) return;
+
+            if (!this.widgets.find(w => w.name === COUNT_WIDGET)) {
+                // 唯讀的整數欄位（自己繪製）。
+                // 為什麼不用內建的數字欄位加 disabled：前端在停用狀態下只畫名稱、不畫數值，看不到行數。
+                // 這個欄位沒有 mouse() 處理，使用者無法點擊、拖曳或輸入。
+                // serialize = false：不存進工作流程（載入時由文字內容重新計算）；
+                // 放在最後面，不會讓工作流程的其他欄位錯位
+                this.widgets.push({
+                    name: COUNT_WIDGET,
+                    type: "custom_flower_readonly",
+                    value: 0,
+                    serialize: false,
+                    computeSize: () => [220, 24],
+                    draw(ctx, node, width, y) {
+                        // 一般模式下清掉「開過 Vue 節點模式後殘留的舊 widget.width」（原因同 Audio Merge 的四連按鈕）
+                        if (this.width && ctx.canvas === app.canvas?.canvas) {
+                            this.width = undefined;
+                            width = node.renderingSize?.[0] ?? node.size[0];
+                        }
+                        const margin = 15, h = 20;   // 左右留白與高度比照內建欄位
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.roundRect(margin, y, width - margin * 2, h, h / 2);
+                        ctx.fillStyle = "#1b1b1b";
+                        ctx.fill();
+                        ctx.strokeStyle = "#555";
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                        ctx.font = "12px Arial";
+                        ctx.textBaseline = "middle";
+                        ctx.textAlign = "left";
+                        ctx.fillStyle = "#999";
+                        ctx.fillText("總行數 (Line Count)", margin * 2, y + h / 2 + 1);
+                        ctx.textAlign = "right";
+                        ctx.fillStyle = "#fff";
+                        ctx.fillText(String(this.value), width - margin * 2, y + h / 2 + 1);
+                        ctx.restore();
+                    },
+                });
+                // widgets.push 不會自動調整節點大小：一次性把節點加高到放得下（只增不減，不覆寫 computeSize / onResize）
+                const needSize = this.computeSize();
+                this.setSize([Math.max(this.size[0], needSize[0]), Math.max(this.size[1], needSize[1])]);
+            }
+
+            // 文字內容一有變更就重新計算。兩條路徑都接上：
+            //  1) widget.callback：前端更新 widget 值時呼叫
+            //  2) 文字框的 input 事件：打字、貼上、剪下、拖放文字的當下
+            const originalCallback = textWidget.callback;
+            textWidget.callback = function (value) {
+                const result = originalCallback?.apply(this, arguments);
+                setLineCount(node, countTextLines(value));
+                return result;
+            };
+            textWidget.inputEl?.addEventListener("input", () => {
+                setLineCount(node, countTextLines(textWidget.inputEl.value));
+            });
+
+            setLineCount(node, countTextLines(textWidget.value));
+        };
+
+        // 載入工作流程、貼上節點、復原（Ctrl+Z）時：儲存的文字已套用完畢，重新計算一次
+        const onConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function () {
+            if (onConfigure) onConfigure.apply(this, arguments);
+            const textWidget = this.widgets?.find(w => w.name === "text");
+            if (textWidget) setLineCount(this, countTextLines(textWidget.value));
+        };
+
+        // text 的接線被拔掉時，節點改回使用自己文字框的內容，計數也要跟著重算
+        // （否則會停在接線時最後一次執行回傳的行數）
+        const onConnectionsChange = nodeType.prototype.onConnectionsChange;
+        nodeType.prototype.onConnectionsChange = function (type, index, isConnected) {
+            if (onConnectionsChange) onConnectionsChange.apply(this, arguments);
+            if (!isConnected && type === LiteGraph.INPUT && this.inputs?.[index]?.name === "text") {
+                const textWidget = this.widgets?.find(w => w.name === "text");
+                if (textWidget) setLineCount(this, countTextLines(textWidget.value));
+            }
+        };
+
+        // 執行後以後端實際讀到的行數為準。text 由其他節點接線傳入時，
+        // 前端看不到接進來的內容，只能靠這裡更新
+        const onExecuted = nodeType.prototype.onExecuted;
+        nodeType.prototype.onExecuted = function (message) {
+            if (onExecuted) onExecuted.apply(this, arguments);
+            if (message?.line_count) setLineCount(this, message.line_count[0]);
+        };
+    };
+
     app.registerExtension({
         name: "Flower.MultilinePromptSelector.V31",
         async beforeRegisterNodeDef(nodeType, nodeData, app) {
@@ -1192,6 +1342,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 setupAudioMerge(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerCutSilence") {
                 setupCutSilence(nodeType, nodeData.name);
+            } else if (nodeData.name === "FlowerIntFromLines") {
+                setupIntFromLines(nodeType, nodeData.name);
             } else if (nodeData.name === "FlowerFileNameCombination") {
                 // 修改原型以增加幫助按鈕與預設寬度
                 const onNodeCreated = nodeType.prototype.onNodeCreated;

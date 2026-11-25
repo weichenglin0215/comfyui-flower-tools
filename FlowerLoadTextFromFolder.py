@@ -40,6 +40,20 @@ def _get_sort_key(sort_mode):
         return lambda f: f.lower()
 
 
+def _seed_to_index(seed, continuous_processing):
+    """
+    把 seed 換算成清單中的位置（回傳 0 起算的 Python 索引，尚未對清單長度取餘數）。
+
+    seed 從 1 開始，對應節點下方檔案清單的編號（清單也從 1 開始）。
+    continuous_processing = k 代表同一個項目連續處理 k 次：
+      seed 1 ~ k → 清單第 1 項、seed k+1 ~ 2k → 第 2 項，依此類推。
+
+    小於 1 的 seed（例如舊工作流程存的 0，或由其他節點接線傳入的 0）一律視為 1，
+    避免換算成負數索引而跑到清單最後一項。
+    """
+    return (max(1, seed) - 1) // max(1, continuous_processing)
+
+
 def _replace_fullwidth_space(text):
     """
     將全形空白（U+3000，中文常見的段首縮排 "　　"）取代為半形空白。
@@ -47,6 +61,22 @@ def _replace_fullwidth_space(text):
     只處理 U+3000，不動換行、定位點或其他空白字元。
     """
     return text.replace("　", " ")
+
+
+# 行首空白字元：任何「不是換行」的空白（半形空白、全形空白、定位點 Tab、不換行空白等），
+# 再加上看不見的 BOM：記事本存出的 .txt 開頭常有 BOM，後面接著段首縮排，
+# 不把 BOM 一起刪掉的話，第一行的縮排就刪不掉。
+# BOM 用 chr(0xFEFF) 寫，避免原始碼裡出現看不見的字元。
+# re.MULTILINE 讓 ^ 對應「每一行」的開頭
+_LINE_LEADING_BLANK_RE = re.compile(r"^(?:[^\S\r\n]|" + chr(0xFEFF) + r")+", re.MULTILINE)
+
+
+def _strip_line_leading_space(text):
+    """
+    刪除每一行行首的空白字元（全形、半形都刪），避免 AI 語音唸到行首空白時產生顫音。
+    只刪行首：行中與行尾的空白都保留，換行也保留（只有空白的行會變成空行，行數不變）。
+    """
+    return _LINE_LEADING_BLANK_RE.sub("", text)
 
 
 def _append_fullwidth_period(text, split_symbols):
@@ -244,23 +274,17 @@ _BRACKET_PAIRS = {
 _CLOSE_BRACKETS = frozenset(_BRACKET_PAIRS.values())
 
 
-def _mark_bracket_interiors(text):
+def _match_bracket_pairs(text):
     """
-    標記「在哪些位置切斷會把一對括號切成兩半」。
-
-    回傳長度 len(text)+1 的 bytearray：inside[p] == 1 代表在位置 p 切斷
-    （text[:p] 為前一段、text[p:] 為下一段）會落在某一對括號內部，不可切。
-    對一對括號（開頭位置 o、結尾位置 c）來說，不可切的位置是 o+1 ~ c：
-      - 切在開頭括號之前（p == o）：整對括號都在下一段，可以切。
-      - 切在結尾括號之後（p == c+1）：整對括號都在前一段，可以切。
+    找出文字中所有「成對」的括號，回傳 [(開頭位置 o, 結尾位置 c), ...]
+    （依結尾括號出現的順序排列，所以內層括號一定排在外層括號之前）。
 
     配對方式：用堆疊由左到右掃描，結尾括號與「最近一個同種類的開頭括號」配對，
     夾在中間沒有配到對的開頭括號直接捨棄；沒有開頭可配的結尾括號視為雜訊忽略。
     因此文字中少了結尾括號（找不到 」）時，那個開頭括號不會被保護，也不會影響其他段落。
-    巢狀括號（如 「他說：『好。』」）會一併保護，外層整對都不可切。
+    巢狀括號（如 「他說：『好。』」）會一併配對成內外兩對。
     """
-    n = len(text)
-    inside = bytearray(n + 1)
+    pairs = []
     stack = []  # 每項為 (期待的結尾括號, 開頭括號位置)
 
     for i, ch in enumerate(text):
@@ -272,13 +296,63 @@ def _mark_bracket_interiors(text):
             # 結尾括號：由最近的開頭往回找第一個種類相同的配對
             for k in range(len(stack) - 1, -1, -1):
                 if stack[k][0] == ch:
-                    open_idx = stack[k][1]
+                    pairs.append((stack[k][1], i))
                     del stack[k:]  # 該開頭及其後尚未配對的開頭一併出堆疊
-                    # open_idx+1 ~ i（含）之間的切點都會把這對括號切開
-                    inside[open_idx + 1:i + 1] = b'\x01' * (i - open_idx)
                     break
 
-    return inside
+    return pairs
+
+
+def _analyze_brackets(text, max_chars):
+    """
+    標記「在哪些位置切斷會把一對括號切成兩半」，整份文字只算一次，之後切段時直接查表。
+    對一對括號（開頭位置 o、結尾位置 c，括號長度 = c - o + 1）來說：
+      - 切在開頭括號之前（p == o）：整對括號都在下一段，可以切。
+      - 切在結尾括號之後（p == c+1）：整對括號都在前一段，可以切。
+      - 切在括號內部（o+1 ~ c）：會把括號切開，要看這對括號的長度：
+          · 長度 <= max_chars（「短括號」）：一定放得進一段，內部永遠不可切。
+          · 長度 >  max_chars（「長括號」）：怎麼放都放不進一段，內部是否可切取決於
+            「這一段從哪裡開始」——這一段若從這對括號的開頭（或括號內部）才開始，
+            就允許在內部切；若這一段從括號之前就開始，則不可切，
+            應該切在括號之前，讓整對括號移到下一段（見 _compute_segments）。
+      - 切在「結尾括號之前」（p == c）：不論長短，一般情況都不切，否則 」 會單獨出現在下一段開頭。
+        只有在「別無選擇」時（整段都是受保護的位置，例如剛好等於上限的短括號後面緊接外層結尾括號），
+        才允許切在這裡：括號內容完整留在前一段，只有結尾括號落到下一段開頭。
+
+    回傳 (inside, before_closer, open_at, long_open)：
+      inside       : 長度 len(text)+1 的 bytearray，inside[p] == 1 代表位置 p 在某對「短括號」的內部
+                     （o+1 ~ c-1），永遠不可切。
+      before_closer: 長度 len(text)+1 的 bytearray，before_closer[p] == 1 代表 text[p] 是某對括號的
+                     結尾括號（位置 p 是「結尾括號之前」），一般情況不切。
+      open_at      : 長度 len(text)+1 的 bytearray，open_at[p] == 1 代表 text[p] 是成對括號的開頭，
+                     位置 p 可作為「括號之前」的切點。
+      long_open    : 長括號的內部標記。long_open[p] 是「包住位置 p 的長括號中，開頭位置最大
+                     （最內層）的那一個」，沒有則為 -1；沒有任何長括號時整個回傳 None（省記憶體）。
+                     在「這一段的有效起點是 anchor」時，若 long_open[p] > anchor，代表位置 p 在
+                     一對「anchor 之後才開始」的長括號內部，不可切。
+    """
+    n = len(text)
+    inside = bytearray(n + 1)
+    before_closer = bytearray(n + 1)
+    open_at = bytearray(n + 1)
+    long_open = None
+
+    for o, c in _match_bracket_pairs(text):
+        open_at[o] = 1
+        before_closer[c] = 1
+        if c - o + 1 <= max_chars:
+            # 短括號：o+1 ~ c-1 之間的切點都會把這對括號切開
+            inside[o + 1:c] = b'\x01' * (c - o - 1)
+        else:
+            # 長括號：記下內部每個位置屬於哪一個長括號的開頭。
+            # 內層括號比外層先處理（先結尾），所以只在尚未被內層標記的位置寫入外層開頭
+            if long_open is None:
+                long_open = [-1] * (n + 1)
+            for p in range(o + 1, c):
+                if long_open[p] < o:
+                    long_open[p] = o
+
+    return inside, before_closer, open_at, long_open
 
 
 def _compute_segments(text, max_chars, split_symbols):
@@ -291,13 +365,29 @@ def _compute_segments(text, max_chars, split_symbols):
       切斷後跳過開頭的空白與換行，再繼續處理下一段。
 
     成對括號保護（「」『』［］【】〔〕｛｝＜＞〈〉《》（））：
-      括號內通常是角色說的一句話，一定要和結尾括號放在同一個段落，所以：
-      - 切點不可落在一對括號的內部（見 _mark_bracket_interiors）。
-        括號內的 ，。？！ 等分段符號因此不再當作切點，括號只會整對留在前一段或移到下一段。
+      括號內通常是角色說的一句話，要和結尾括號放在同一個段落，所以：
+      - 括號內的 ，。？！ 等分段符號不當作切點，括號只會整對留在前一段或移到下一段。
       - 括號結尾若緊接在分段符號之後（如 。」 ！』），切點算在結尾括號「之後」，
         不會把 」 單獨留到下一段開頭。
-      - 若括號本身就比 max_chars 還長，前方又找不到可切的位置，
-        這一段會往後延伸到結尾括號為止（允許超過 max_chars），不會把括號切開。
+      - 字數上限是硬性的：每一段都不超過 max_chars。括號保護絕不能把一段撐過上限
+        （語音模型遇到太長的段落，後半段會漏字），所以括號太長時依下列規則處理。
+
+    括號太長（長度 > max_chars，怎麼放都放不進一段）的處理（見 _analyze_brackets）：
+      規則 1：這一段不是從這對括號的開頭開始，而上限落在這對括號裡面
+              → 不要包含括號內的文字，切在括號「之前」，整對括號移到下一段
+              （寧可這一段變短）。括號之前沒有標點時，也允許直接切在開頭括號之前。
+      規則 2：這一段從這對括號的開頭開始，括號本身就超過上限
+              → 無法再移到下一段，只好把括號內的文字切開。
+              切點優先選括號內部的分段符號（內層沒超過上限的括號仍保持完整，
+              超過的內層括號再套用同樣規則）；括號內沒有分段符號才在上限處硬切。
+              整份文字的括號配對與長短是「一開始就一次算好」的（_analyze_brackets），
+              所以切開後下一段雖然開頭沒有 「，也知道自己還在括號裡面，
+              不會誤判成一般文字；括號的最後一小段會連同括號後方的文字，
+              繼續依一般規則填滿到上限為止。
+    一般（短）括號則是：上限落在括號內部時，往前找括號之前的切點；
+    前方連一個可切的位置都沒有，就切在最近的「括號之前」，不再往後延伸而超過上限。
+    段落開頭若是連續的開頭括號（如 「『…），視為這一段已經身在括號裡面，
+    不會切在這些開頭括號之間，避免產生只剩一個 「 的段落。
 
     回傳 [(start, end), ...] 列表，text[start:end] 即為該段落文字。
     """
@@ -308,23 +398,68 @@ def _compute_segments(text, max_chars, split_symbols):
         return [(0, n)]
 
     split_set = set(split_symbols)
-    # 預先標記哪些切點會把成對括號切開（只算一次，後面回推時直接查表）
-    inside = _mark_bracket_interiors(text)
+    # 預先標記括號資訊（只算一次，後面回推時直接查表），內容見 _analyze_brackets
+    inside, before_closer, open_at, long_open = _analyze_brackets(text, max_chars)
 
-    def is_cut_point(p):
+    def interior_blocked(p, anchor):
         """
-        位置 p（text[:p] 為前一段）是否為合法切點：
-          1. 不能落在成對括號內部。
+        在位置 p 切斷（text[:p] 為前一段、text[p:] 為下一段）是否會切進某對括號的「內部」？
+        anchor 是目前這一段的「有效起點」：長括號只有在「這一段從括號之前就開始」
+        （括號開頭位置 > anchor）時，內部才不可切；
+        這一段若從長括號的開頭或內部才開始（規則 2），內部就允許切。
+        """
+        return bool(inside[p]) or (long_open is not None and long_open[p] > anchor)
+
+    def blocked(p, anchor):
+        """位置 p 是否不該切：切進括號內部，或切在成對結尾括號之前（會讓 」 單獨落到下一段開頭）。"""
+        return interior_blocked(p, anchor) or bool(before_closer[p])
+
+    def is_cut_point(p, anchor):
+        """
+        位置 p 是否為合法切點：
+          1. 不能把括號切開（見 blocked）。
           2. p 之前必須是分段符號；若緊貼著結尾括號，則略過這些結尾括號後再看是不是分段符號
              （例：「你好。」 的切點在 」 之後，而不是 。 與 」 之間）。
         沒有任何括號時，行為與原本「text[p-1] 是分段符號」完全相同。
         """
-        if inside[p]:
+        if blocked(p, anchor):
             return False
         j = p - 1
         while j >= 0 and text[j] in _CLOSE_BRACKETS:
             j -= 1
         return j >= 0 and text[j] in split_set
+
+    def last_open_cut(search_pos, anchor):
+        """
+        從 search_pos 往前找最近、而且不會把括號切開的「開頭括號之前」位置；找不到回傳 -1。
+        只找 anchor 之後的位置：anchor 之前都是這一段開頭連續的開頭括號，
+        切在它們之間會讓這一段只剩幾個 「 而沒有任何內容。
+        """
+        for i in range(search_pos, anchor, -1):
+            if open_at[i] and not blocked(i, anchor):
+                return i
+        return -1
+
+    def forced_cut(search_pos, anchor):
+        """
+        上限處（search_pos）不能直接切，而且前面沒有分段符號可切時的最後手段，依序嘗試：
+          1. 最近的「開頭括號之前」。
+          2. 往前退到最近一個完全不會切開括號的位置。
+          3. 別無選擇（整段都是受保護的位置）：允許切在成對結尾括號之前——
+             括號內容完整留在這一段，只有結尾括號落到下一段開頭。
+          4. 連這個都沒有（理論上不會發生）：在上限處強制截斷。
+        一律只往前找（而且只找 anchor 之後），所以這一段絕不會超過 max_chars。
+        """
+        cut = last_open_cut(search_pos, anchor)
+        if cut != -1:
+            return cut
+        for i in range(search_pos, anchor, -1):
+            if not blocked(i, anchor):
+                return i
+        for i in range(search_pos, anchor, -1):
+            if not interior_blocked(i, anchor):
+                return i
+        return search_pos
 
     segments = []
     start = 0
@@ -339,26 +474,39 @@ def _compute_segments(text, max_chars, split_symbols):
         search_pos = start + max_chars
         cut = -1
 
+        # 有效起點 anchor：這一段開頭若緊接著連續的成對開頭括號（如 「『…），
+        # 視為這一段「已經身在這些括號裡面」，直接對它們套用規則 2。
+        # 否則（外層開頭緊接內層長括號）規則 1 會把切點放在內層括號之前，這一段就只剩一個 「。
+        anchor = start
+        while anchor < n and open_at[anchor]:
+            anchor += 1
+
         # 第一輪：找「分段符號 + 緊接換行」（真正的段落邊界，如 。\n ！\n ？\n 或 。」\n）
         for i in range(search_pos, start, -1):
-            if i < n and text[i] in '\n\r' and is_cut_point(i):
+            if i < n and text[i] in '\n\r' and is_cut_point(i, anchor):
                 cut = i  # 切在符號之後、換行之前；換行由後方跳過迴圈處理
                 break
+
+        # 規則 1：上限落在一對「從這一段之後才開始」的長括號裡面
+        # → 直接切在該括號之前，讓整對括號移到下一段（下一段就會從括號開頭開始，進入規則 2）。
+        # 不再往前找更早的分段符號：那樣只會讓括號前的文字被切成不必要的小段。
+        if cut == -1 and long_open is not None and long_open[search_pos] > anchor:
+            cut = last_open_cut(search_pos, anchor)
 
         # 第二輪回退：找任意分段符號（段落邊界不在範圍內時的降級處理）
         if cut == -1:
             for i in range(search_pos, start, -1):
-                if is_cut_point(i):
+                if is_cut_point(i, anchor):
                     cut = i
                     break
 
-        # 最終回退：整段都沒有可切的位置，強制在上限處截斷。
-        # 若上限剛好落在一對括號內部，就往後延伸到該括號結尾之後，確保括號不被切開
-        # （這一段會超過 max_chars，但括號內的話必須完整保留）
+        # 最終回退：整段都沒有分段符號可切，在上限處強制截斷。
+        # 上限若剛好落在括號內部（或結尾括號之前），改用 forced_cut 往前找不會切開括號的位置。
+        # 一律只往前找，所以這一段絕不會超過 max_chars。
         if cut == -1:
             cut = search_pos
-            while cut < n and inside[cut]:
-                cut += 1
+            if blocked(cut, anchor):
+                cut = forced_cut(search_pos, anchor)
 
         segments.append((start, cut))
 
@@ -367,12 +515,10 @@ def _compute_segments(text, max_chars, split_symbols):
             cut += 1
         start = cut
 
-    # 若最後一段字數不足 64，合併到倒數第二段，避免產生過短的尾段
-    # （原為 128；改為 64 後，字數介於 64~127 的尾段會保留為獨立一段，不再被併入前一段）
-    if len(segments) > 1 and (segments[-1][1] - segments[-1][0]) < 64:
-        segments[-2] = (segments[-2][0], segments[-1][1])
-        segments.pop()
-
+    # 尾段不再合併到前一段（原本「不足 128／64 字就併入前一段」的規則已移除）：
+    # 字數上限是硬性的，必須「合併後總長不超過 max_chars」才能合併，但這個條件永遠不會成立——
+    # 倒數第二段之所以存在，是因為從它的起點算起剩餘字數仍超過 max_chars，
+    # 也就是它加上尾段一定超過 max_chars。所以短尾段會保持獨立一段。
     return segments
 
 
@@ -388,19 +534,21 @@ class FlowerLoadTextFromFolder:
                 # 3. 排除關鍵字：從 filter_keyword 篩選結果中進一步排除符合的檔案
                 #    支援 '&'（AND）與 '|'（OR）分隔多關鍵字
                 "negativeKeyword": ("STRING", {"default": "", "placeholder": "'|'  OR 分隔  '&' 為 AND 分隔 範例：'A&B|C'"}),
-                # 4. seed：指定選取第幾個檔案或分段
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                # 4. seed：指定選取第幾個檔案或分段。從 1 開始，對應節點下方檔案清單的編號
+                "seed": ("INT", {"default": 1, "min": 1, "max": 0xffffffffffffffff}),
                 # 5. 生成後控制，與 seed 綁定
                 "continuous_processing": ("INT", {"default": 1, "min": 1, "max": 9999999}),
                 # 6. 排序方式
                 "sort_mode": (["字母排序(Alphabetical)", "自然排序(Natural)"],),
             },
             "optional": {
-                # 7. 分段字數上限（-1 = 不分段；≥100 = 啟用分段）
+                # 7. 分段字數上限（-1 = 不分段；≥100 = 啟用分段）。每一段都不會超過這個字數
+                #    （括號保護、尾段合併都不能突破上限，否則 AI 語音後半段會漏字）
                 #    optional 確保舊工作流程載入時不會因缺少此欄位而報錯
                 "max_chars_per_segment": ("INT", {"default": 100, "min": -1, "max": 0xffffffffffffffff}),
                 # 8. 分段符號，回推時以此符號集為合法切斷點
-                #    （「」『』［］【】〔〕｛｝＜＞〈〉《》（） 成對括號內部不會被切斷，見 _compute_segments）
+                #    （「」『』［］【】〔〕｛｝＜＞〈〉《》（） 成對括號內部不會被切斷；
+                #      但括號本身比字數上限還長時，為了守住上限只好切開，見 _compute_segments）
                 "split_symbols": ("STRING", {"default": ",.?!;:，。？！；："}),
                 # 9. 章節分段模式：
                 #    - 無：不分章節，整篇依字數上限分段，檔名不加「第X章」
@@ -425,6 +573,11 @@ class FlowerLoadTextFromFolder:
                 #     同樣放在 optional 最後面，舊工作流程載入時不會錯位；
                 #     不影響分段位置與檔名類輸出（只改輸出的文字內容）
                 "append_fullwidth_period": ("BOOLEAN", {"default": True, "label_on": "輸出文字末端增加全形句點", "label_off": "不增加（維持原文結尾）"}),
+                # 13. 刪除行首空白字元（預設勾選）：
+                #     輸出文字（text）與預覽框中，每一行行首的空白（全形、半形都算）全部刪除，
+                #     避免 AI 語音產生顫音。放在 optional 最後面，舊工作流程載入時不會錯位；
+                #     分段仍以原文計算，所以分段位置與檔名類輸出不受影響
+                "strip_line_leading_space": ("BOOLEAN", {"default": True, "label_on": "刪除行首空白字元", "label_off": "不刪除（保留行首空白）"}),
             },
         }
 
@@ -438,7 +591,7 @@ class FlowerLoadTextFromFolder:
                                sort_mode, max_chars_per_segment=100, split_symbols=",.?!;:，。？！；：",
                                negativeKeyword="", split_by_chapter="根據章編號分章輸出(第一章)",
                                chars_per_auto_chapter=4000, replace_fullwidth_space=True,
-                               append_fullwidth_period=True):
+                               append_fullwidth_period=True, strip_line_leading_space=True):
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -473,12 +626,11 @@ class FlowerLoadTextFromFolder:
                 base_dir, all_files, seed, continuous_processing,
                 max_chars_per_segment, split_symbols, split_by_chapter,
                 chars_per_auto_chapter, replace_fullwidth_space,
-                append_fullwidth_period,
+                append_fullwidth_period, strip_line_leading_space,
             )
 
         # ── 直接模式（不分段）──
-        process_idx = seed // max(1, continuous_processing)
-        file_idx = process_idx % len(all_files)
+        file_idx = _seed_to_index(seed, continuous_processing) % len(all_files)
 
         selected_file = all_files[file_idx]
         full_path = os.path.join(base_dir, selected_file)
@@ -497,12 +649,16 @@ class FlowerLoadTextFromFolder:
         if replace_fullwidth_space:
             content = _replace_fullwidth_space(content)
 
+        # 刪除每一行行首的空白字元（同樣是 text 輸出與預覽框一起生效）
+        if strip_line_leading_space:
+            content = _strip_line_leading_space(content)
+
         # 結尾不是分段符號就補上全形句點（不分段時，整個檔案內容就是「這一段」）
         if append_fullwidth_period:
             content = _append_fullwidth_period(content, split_symbols)
 
-        # 產生編號檔案清單（從 0 開始）
-        file_list_lines = [f"{i}- {fn}" for i, fn in enumerate(all_files)]
+        # 產生編號檔案清單（從 1 開始，編號即對應的 seed）
+        file_list_lines = [f"{i}- {fn}" for i, fn in enumerate(all_files, 1)]
         file_list_str = "\n".join(file_list_lines)
 
         return {
@@ -514,7 +670,7 @@ class FlowerLoadTextFromFolder:
                              max_chars, split_symbols,
                              split_by_chapter="根據章編號分章輸出(第一章)",
                              chars_per_auto_chapter=4000, replace_fullwidth_space=True,
-                             append_fullwidth_period=True):
+                             append_fullwidth_period=True, strip_line_leading_space=True):
         """
         分段模式核心邏輯。
 
@@ -526,8 +682,9 @@ class FlowerLoadTextFromFolder:
 
         虛擬條目列表顯示格式（file_list_display）：
           「序號- 檔名-段落序號(04d)-段落結尾字元位置」
-          例：0- 美如與倩兒-0001-983
-              1- 美如與倩兒-0002-1968
+          例：1- 美如與倩兒-0001-983
+              2- 美如與倩兒-0002-1968
+        序號從 1 開始，即對應的 seed（continuous_processing 為 1 時兩者相同，見 _seed_to_index）。
 
         這樣做的好處：seed 直接對應虛擬列表，不會因 continuous_processing
         影響而誤跳到不同檔案，解決跨檔案矛盾問題。
@@ -582,8 +739,7 @@ class FlowerLoadTextFromFolder:
             return {"ui": {"text": [msg], "file_list": [""]}, "result": (msg, "", "", "")}
 
         # 依 seed 計算虛擬列表索引
-        process_idx = seed // max(1, continuous_processing)
-        entry = virtual_entries[process_idx % len(virtual_entries)]
+        entry = virtual_entries[_seed_to_index(seed, continuous_processing) % len(virtual_entries)]
 
         # 讀取對應段落的文字內容
         try:
@@ -594,6 +750,9 @@ class FlowerLoadTextFromFolder:
             # 所以不會改變分段位置，檔名中的「結尾字元位置」也不受影響
             if replace_fullwidth_space:
                 content = _replace_fullwidth_space(content)
+            # 刪除每一行行首的空白字元。也是在切出段落之後才刪，分段位置不受影響
+            if strip_line_leading_space:
+                content = _strip_line_leading_space(content)
             # 這一段的結尾不是分段符號就補上全形句點。同樣只改輸出內容，
             # 不影響分段位置與檔名中的「結尾字元位置」（file_list 與虛擬檔名都用原文的 end）
             if append_fullwidth_period:
@@ -603,7 +762,7 @@ class FlowerLoadTextFromFolder:
 
         # 產生虛擬分段清單（格式：序號- 檔名-XXX第X章-段落號-結尾字元位置）
         file_list_lines = []
-        for i, e in enumerate(virtual_entries):
+        for i, e in enumerate(virtual_entries, 1):   # 序號從 1 開始，即對應的 seed
             chap_prefix = f"-{e['chap_num']:03d}{e['chap_label']}" if e.get('chap_label') else ""
             seg_label = f"{e['name_no_ext']}{chap_prefix}-{e['seg_num']:04d}-{e['end']}"
             file_list_lines.append(f"{i}- {seg_label}")
@@ -684,7 +843,7 @@ async def preview_text_segments(request):
         result = node.load_text_from_folder(
             directory             = q.get("directory", ""),
             filter_keyword        = q.get("filter_keyword", ""),
-            seed                  = _qi("seed", 0),
+            seed                  = _qi("seed", 1),
             continuous_processing = _qi("continuous_processing", 1),
             sort_mode             = q.get("sort_mode", "字母排序(Alphabetical)"),
             max_chars_per_segment = _qi("max_chars_per_segment", 100),
@@ -694,6 +853,7 @@ async def preview_text_segments(request):
             chars_per_auto_chapter = _qi("chars_per_auto_chapter", 4000),
             replace_fullwidth_space = _qb("replace_fullwidth_space", True),
             append_fullwidth_period = _qb("append_fullwidth_period", True),
+            strip_line_leading_space = _qb("strip_line_leading_space", True),
         )
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
@@ -708,4 +868,4 @@ async def preview_text_segments(request):
 
 
 NODE_CLASS_MAPPINGS = {"FlowerLoadTextFromFolder": FlowerLoadTextFromFolder}
-NODE_DISPLAY_NAME_MAPPINGS = {"FlowerLoadTextFromFolder": "🌸Flower Load Text From Folder"}
+NODE_DISPLAY_NAME_MAPPINGS = {"FlowerLoadTextFromFolder": "🌸Flower Load Text From Folder(seed 從 1 開始)"}
