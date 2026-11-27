@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import os
 import re
+import threading
+from collections import OrderedDict
 
 from server import PromptServer
 from aiohttp import web
@@ -541,6 +544,119 @@ def _compute_segments(text, max_chars, split_symbols):
     return segments
 
 
+# ── 分段結果快取 ─────────────────────────────────────────────────────────────
+# 分段模式每次執行都要知道「所有檔案」各分成幾段，才能把 seed 對應到清單中的項目。
+# 分段計算（尤其是括號配對）很花時間，而且隨總字數增加（180 萬字約 0.6 秒）；
+# 但只要檔案內容與分段設定沒變，結果一定相同，所以算過一次就記下來重複使用。
+#
+# 判斷「檔案有沒有改過」是比對內容本身的雜湊值，而不是修改時間與檔案大小：
+# 檔案仍然每次都讀（遠比分段計算快），只要內容有任何改變就一定重新分段，
+# 不會因為某些同步或編輯工具保留了修改時間，而拿舊的分段位置去切新的內容。
+#
+# 快取分成多個「桶」：一組「目錄＋分段設定」一個桶，桶裡每個檔案一筆（檔案改過就覆蓋舊的）。
+# 只保留最近用過的幾個桶，反覆調整字數上限等設定時，記憶體才不會一直增加。
+# 以「桶」為單位淘汰（而不是限制總筆數），檔案再多也不會發生「邊算邊把剛才算好的丟掉」。
+_SEGMENT_CACHE_MAX_BUCKETS = 8
+_segment_cache = OrderedDict()   # {(目錄, 分段設定...): {檔名: (內容雜湊, 分段結果)}}
+# 節點在背景執行緒中執行，Refresh 的預覽端點則在伺服器主執行緒，兩者可能同時使用快取
+_segment_cache_lock = threading.Lock()
+
+
+def _segment_cache_bucket(key):
+    """取得指定「目錄＋分段設定」的快取桶；沒有就建立，並淘汰太久沒用到的桶。"""
+    with _segment_cache_lock:
+        bucket = _segment_cache.get(key)
+        if bucket is None:
+            bucket = _segment_cache[key] = {}
+        _segment_cache.move_to_end(key)   # 移到最後面代表「最近用過」
+        while len(_segment_cache) > _SEGMENT_CACHE_MAX_BUCKETS:
+            _segment_cache.popitem(last=False)   # 最前面的是最久沒用到的
+        return bucket
+
+
+def _segment_file(text, max_chars, split_symbols, split_by_chapter, chars_per_auto_chapter):
+    """
+    計算一個檔案的分段結果（內容全是空白行的段落已略過）。
+    回傳 ((start, end, 章節標籤, 章節序號), ...)，start / end 是整篇文字中的字元位置。
+    回傳 tuple：結果會留在快取中重複使用，不可以被呼叫端修改。
+
+    注意：這裡用到的參數若有增減，_load_with_segments 的快取桶 key 要一起調整。
+    """
+    # 先以章節為單位切塊（若關閉則整篇視為單一區塊），
+    # 再在每塊內依字數上限細分，確保段落不跨章。
+    # 依下拉選單決定章節切塊策略
+    if split_by_chapter == "根據章編號分章輸出(第一章)":
+        chapter_blocks = _split_by_chapters(text)
+    elif split_by_chapter == "根據字數自編章節輸出(4000字合成一章)":
+        chapter_blocks = _split_by_char_count(text, chars_per_auto_chapter)
+    else:  # "無"：不分章，整篇單一區塊且無章節標籤
+        chapter_blocks = [(0, len(text), "")]
+
+    segments = []
+    for chap_idx, (blk_start, blk_end, chap_label) in enumerate(chapter_blocks, 1):
+        block_text = text[blk_start:blk_end]
+        for s, e in _compute_segments(block_text, max_chars, split_symbols):
+            # 內容全是空白行的段落不列入清單：沒有任何文字可唸，
+            # 送給 AI 語音只會得到空字串（常見於檔案結尾的多行全形空白剛好自成一段）。
+            # 空的或全是空白的檔案也一樣不列入。
+            # 不受「刪除空白行」勾選與否影響，切換該選項時清單與 seed 編號才不會跟著變動；
+            # 段落序號是過濾之後才編的，所以仍然連續不跳號
+            if _BLANK_LINE_RE.fullmatch(block_text[s:e]):
+                continue
+            # 將區塊內相對位置還原為整篇絕對位置，並記錄所屬章節標籤
+            segments.append((blk_start + s, blk_start + e, chap_label, chap_idx))
+
+    return tuple(segments)
+
+
+# ── 回傳給介面的內容大小限制 ─────────────────────────────────────────────────
+# 節點回傳的 ui 內容不只是顯示在節點上：ComfyUI 會把「每一次執行」的 ui 內容存進執行紀錄
+# （直到清除紀錄或重新啟動 ComfyUI），之後介面查詢工作清單時，伺服器要把所有紀錄的字串掃過一遍。
+# 完整清單可能有好幾萬行（15 個 12 萬字的檔案約 2.5 萬行、88 萬字），每執行一次就多存一份，
+# 於是執行次數越多整個 ComfyUI 越慢，記憶體也一直增加。
+# 所以「執行節點」時只回傳目前項目附近的清單，以及有長度上限的內容預覽；
+# 節點上的 Refresh 按鈕走本節點自己的 API，不會存進執行紀錄，仍然回傳完整清單與完整內容。
+# 這些限制只影響節點上的顯示，text 等輸出永遠是完整的。
+_UI_LIST_BEFORE = 2           # 目前項目之前列出幾項（節點預設大小的清單框只看得到約 5 行，
+                              # 放 2 項時目前項目在第 4 行，不用捲動就看得到）
+_UI_LIST_AFTER = 57           # 目前項目之後列出幾項
+_UI_PREVIEW_MAX_CHARS = 5000  # 內容預覽最多幾個字（分段的段落通常遠小於此，主要影響不分段模式）
+
+
+def _build_list_text(total, current, make_line, full_ui):
+    """
+    組出節點下方「檔案清單」框的文字。
+
+      total     : 清單總項數
+      current   : 目前選到的項目位置（0 起算）
+      make_line : make_line(i) 回傳第 i 項（0 起算）那一行文字；用函數傳入，沒有要顯示的行就不必產生
+      full_ui   : True = 完整清單（Refresh 按鈕）；False = 執行節點時，只列出目前項目附近的行
+
+    清單項數沒有超過顯示範圍時，兩種情況的內容完全相同。
+    """
+    window = _UI_LIST_BEFORE + 1 + _UI_LIST_AFTER
+    if full_ui or total <= window:
+        return "\n".join(make_line(i) for i in range(total))
+    # 接近清單開頭或結尾時，把範圍往另一邊挪，維持固定的列出項數
+    first = min(max(0, current - _UI_LIST_BEFORE), total - window)
+    notice = f"（共 {total} 項，目前是第 {current + 1} 項，這裡只列出附近 {window} 項；完整清單請按 Refresh 按鈕）"
+    return "\n".join([notice, *(make_line(i) for i in range(first, first + window))])
+
+
+def _build_preview_text(content, full_ui):
+    """
+    組出節點上「檔案內容」預覽框的文字：執行節點時超過 _UI_PREVIEW_MAX_CHARS 字就只顯示開頭。
+    只影響預覽框；節點的 text 輸出由呼叫端直接使用完整的 content。
+    """
+    if full_ui or len(content) <= _UI_PREVIEW_MAX_CHARS:
+        return content
+    return (
+        content[:_UI_PREVIEW_MAX_CHARS]
+        + f"\n\n……（共 {len(content)} 字，這裡只顯示前 {_UI_PREVIEW_MAX_CHARS} 字。"
+        + "text 輸出仍是完整內容；要在這裡看全文請按 Refresh 按鈕）"
+    )
+
+
 class FlowerLoadTextFromFolder:
     @classmethod
     def INPUT_TYPES(s):
@@ -616,7 +732,9 @@ class FlowerLoadTextFromFolder:
                                negativeKeyword="", split_by_chapter="根據章編號分章輸出(第一章)",
                                chars_per_auto_chapter=4000, replace_fullwidth_space=True,
                                append_fullwidth_period=True, strip_line_leading_space=True,
-                               remove_blank_lines=True):
+                               remove_blank_lines=True, full_ui=False):
+        # full_ui 不是節點的輸入欄位（ComfyUI 執行時不會傳入），只有 Refresh 按鈕的預覽端點會設為 True：
+        # True = 節點上顯示用的清單與內容預覽不縮短（見 _build_list_text 上方的說明）
         base_dir = directory.strip()
 
         # 目錄驗證
@@ -652,6 +770,7 @@ class FlowerLoadTextFromFolder:
                 max_chars_per_segment, split_symbols, split_by_chapter,
                 chars_per_auto_chapter, replace_fullwidth_space,
                 append_fullwidth_period, strip_line_leading_space, remove_blank_lines,
+                full_ui=full_ui,
             )
 
         # ── 直接模式（不分段）──
@@ -687,11 +806,11 @@ class FlowerLoadTextFromFolder:
             content = _append_fullwidth_period(content, split_symbols)
 
         # 產生編號檔案清單（從 1 開始，編號即對應的 seed）
-        file_list_lines = [f"{i}- {fn}" for i, fn in enumerate(all_files, 1)]
-        file_list_str = "\n".join(file_list_lines)
+        file_list_str = _build_list_text(
+            len(all_files), file_idx, lambda i: f"{i + 1}- {all_files[i]}", full_ui)
 
         return {
-            "ui": {"text": [content], "file_list": [file_list_str]},
+            "ui": {"text": [_build_preview_text(content, full_ui)], "file_list": [file_list_str]},
             "result": (content, full_path, selected_file, file_name_no_ext),
         }
 
@@ -700,13 +819,14 @@ class FlowerLoadTextFromFolder:
                              split_by_chapter="根據章編號分章輸出(第一章)",
                              chars_per_auto_chapter=4000, replace_fullwidth_space=True,
                              append_fullwidth_period=True, strip_line_leading_space=True,
-                             remove_blank_lines=True):
+                             remove_blank_lines=True, full_ui=False):
         """
         分段模式核心邏輯。
 
         步驟：
           1. 逐一讀取所有符合條件的 .txt 檔案
-          2. 對每個檔案用 _compute_segments() 計算分段位置，內容全是空白行的段落略過
+          2. 取得每個檔案的分段位置（_segment_file()，內容全是空白行的段落略過）；
+             檔案內容與分段設定都沒變時，直接沿用快取的結果，不重新計算
           3. 將所有分段展平成一個虛擬條目列表
           4. 依 seed / continuous_processing 算出索引，取出對應段落文字
 
@@ -721,6 +841,15 @@ class FlowerLoadTextFromFolder:
         """
         virtual_entries = []
 
+        # 這一組「目錄＋分段設定」的快取桶。所有會影響分段結果的設定都要放進 key；
+        # 「自編章節字數」只有在字數自編章節模式才有作用，其他模式改它不需要重新分段。
+        # 只改輸出文字的選項（取代全形空白、補句點等）不影響分段位置，所以不在 key 裡
+        cache_bucket = _segment_cache_bucket((
+            os.path.abspath(base_dir), max_chars, split_symbols, split_by_chapter,
+            chars_per_auto_chapter
+            if split_by_chapter == "根據字數自編章節輸出(4000字合成一章)" else None,
+        ))
+
         for filename in all_files:
             full_path = os.path.join(base_dir, filename)
             try:
@@ -732,29 +861,15 @@ class FlowerLoadTextFromFolder:
 
             name_no_ext = os.path.splitext(filename)[0]
 
-            # 先以章節為單位切塊（若關閉則整篇視為單一區塊），
-            # 再在每塊內依字數上限細分，確保段落不跨章。
-            # 依下拉選單決定章節切塊策略
-            if split_by_chapter == "根據章編號分章輸出(第一章)":
-                chapter_blocks = _split_by_chapters(text)
-            elif split_by_chapter == "根據字數自編章節輸出(4000字合成一章)":
-                chapter_blocks = _split_by_char_count(text, chars_per_auto_chapter)
-            else:  # "無"：不分章，整篇單一區塊且無章節標籤
-                chapter_blocks = [(0, len(text), "")]
-
-            segments = []
-            for chap_idx, (blk_start, blk_end, chap_label) in enumerate(chapter_blocks, 1):
-                block_text = text[blk_start:blk_end]
-                for s, e in _compute_segments(block_text, max_chars, split_symbols):
-                    # 內容全是空白行的段落不列入清單：沒有任何文字可唸，
-                    # 送給 AI 語音只會得到空字串（常見於檔案結尾的多行全形空白剛好自成一段）。
-                    # 空的或全是空白的檔案也一樣不列入。
-                    # 不受「刪除空白行」勾選與否影響，切換該選項時清單與 seed 編號才不會跟著變動；
-                    # 段落序號是過濾之後才編的，所以仍然連續不跳號
-                    if _BLANK_LINE_RE.fullmatch(block_text[s:e]):
-                        continue
-                    # 將區塊內相對位置還原為整篇絕對位置，並記錄所屬章節標籤
-                    segments.append((blk_start + s, blk_start + e, chap_label, chap_idx))
+            # 內容的雜湊值和快取記錄的相同 → 沿用上次算好的分段；否則重新計算並覆蓋舊記錄
+            digest = hashlib.sha1(text.encode("utf-8")).digest()
+            cached = cache_bucket.get(filename)
+            if cached is not None and cached[0] == digest:
+                segments = cached[1]
+            else:
+                segments = _segment_file(
+                    text, max_chars, split_symbols, split_by_chapter, chars_per_auto_chapter)
+                cache_bucket[filename] = (digest, segments)
 
             total_segs = len(segments)
 
@@ -776,7 +891,8 @@ class FlowerLoadTextFromFolder:
             return {"ui": {"text": [msg], "file_list": [""]}, "result": (msg, "", "", "")}
 
         # 依 seed 計算虛擬列表索引
-        entry = virtual_entries[_seed_to_index(seed, continuous_processing) % len(virtual_entries)]
+        entry_idx = _seed_to_index(seed, continuous_processing) % len(virtual_entries)
+        entry = virtual_entries[entry_idx]
 
         # 讀取對應段落的文字內容
         try:
@@ -801,12 +917,14 @@ class FlowerLoadTextFromFolder:
             content = str(e)
 
         # 產生虛擬分段清單（格式：序號- 檔名-XXX第X章-段落號-結尾字元位置）
-        file_list_lines = []
-        for i, e in enumerate(virtual_entries, 1):   # 序號從 1 開始，即對應的 seed
+        def list_line(i):
+            e = virtual_entries[i]
             chap_prefix = f"-{e['chap_num']:03d}{e['chap_label']}" if e.get('chap_label') else ""
             seg_label = f"{e['name_no_ext']}{chap_prefix}-{e['seg_num']:04d}-{e['end']}"
-            file_list_lines.append(f"{i}- {seg_label}")
-        file_list_str = "\n".join(file_list_lines)
+            return f"{i + 1}- {seg_label}"   # 序號從 1 開始，即對應的 seed
+
+        # 執行節點時只列出目前項目附近的行，Refresh 預覽才列出完整清單（見 _build_list_text）
+        file_list_str = _build_list_text(len(virtual_entries), entry_idx, list_line, full_ui)
 
         # 分段模式下，三個路徑輸出改用虛擬段落檔名
         # 格式：檔名-XXX第X章-段落號-結尾字元位置（與 file_list_display 顯示一致）
@@ -817,7 +935,7 @@ class FlowerLoadTextFromFolder:
         virtual_full_path   = os.path.join(os.path.dirname(entry['full_path']), virtual_filename)
 
         return {
-            "ui": {"text": [content], "file_list": [file_list_str]},
+            "ui": {"text": [_build_preview_text(content, full_ui)], "file_list": [file_list_str]},
             "result": (content, virtual_full_path, virtual_filename, virtual_name_no_ext),
         }
 
@@ -895,6 +1013,8 @@ async def preview_text_segments(request):
             append_fullwidth_period = _qb("append_fullwidth_period", True),
             strip_line_leading_space = _qb("strip_line_leading_space", True),
             remove_blank_lines = _qb("remove_blank_lines", True),
+            # Refresh 按鈕的結果不會存進 ComfyUI 執行紀錄，所以回傳完整清單與完整內容
+            full_ui = True,
         )
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)

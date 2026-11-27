@@ -547,7 +547,11 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 const cp = ComfyWidgets["STRING"](this, "content_preview", ["STRING", { multiline: true }], app).widget;
                 cp.label = "檔案內容 (Content Preview)";
                 cp.value = "";
-                cp.serialize = false;
+                cp.serialize = false;                // 不儲存到工作流程 JSON
+                // 上面那行只管「存檔」；「執行」時送給伺服器的資料要另外用 options.serialize 排除。
+                // 沒排除的話，框裡的文字會被當成節點輸入送出，並跟著每一次的執行紀錄累積在伺服器上
+                // （按過 Refresh 後框裡是完整內容與完整清單，可能有上百萬字，會讓 ComfyUI 越跑越慢）
+                (cp.options ??= {}).serialize = false;
                 if (cp.inputEl) {
                     cp.inputEl.readOnly = true;
                     cp.inputEl.style.opacity = "0.7";
@@ -559,7 +563,8 @@ console.log("🌸🌸🌸 Flower Multiline Prompt Selector: The Final Solution V
                 const fl = ComfyWidgets["STRING"](this, "file_list_display", ["STRING", { multiline: true }], app).widget;
                 fl.label = "檔案清單 (File List)";
                 fl.value = "";
-                fl.serialize = false;
+                fl.serialize = false;                // 不儲存到工作流程 JSON
+                (fl.options ??= {}).serialize = false;  // 執行時也不送給伺服器（原因同上方 content_preview）
                 if (fl.inputEl) {
                     fl.inputEl.readOnly = true;
                     fl.inputEl.style.opacity = "0.7";
